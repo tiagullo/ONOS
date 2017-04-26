@@ -1,10 +1,10 @@
 #!/usr/bin/python
 
-from mininet.topo import Topo
-from mininet.net import Mininet
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info, debug
+from mininet.net import Mininet
 from mininet.node import Host, RemoteController, OVSSwitch
+from mininet.topo import Topo
 
 QUAGGA_DIR = '/usr/lib/quagga'
 # Must exist and be owned by quagga user (quagga:quagga by default on Ubuntu)
