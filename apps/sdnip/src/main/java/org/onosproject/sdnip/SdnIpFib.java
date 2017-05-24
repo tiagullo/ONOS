@@ -17,17 +17,15 @@
 package org.onosproject.sdnip;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import javafx.util.Pair;
-import org.apache.commons.lang.ObjectUtils;
 import org.apache.felix.scr.annotations.Activate;
 import org.apache.felix.scr.annotations.Component;
 import org.apache.felix.scr.annotations.Deactivate;
 import org.apache.felix.scr.annotations.Reference;
 import org.apache.felix.scr.annotations.ReferenceCardinality;
-import org.onlab.packet.Data;
 import org.onlab.packet.Ethernet;
-import org.onlab.packet.IP;
 import org.onlab.packet.IpAddress;
 import org.onlab.packet.IpPrefix;
 import org.onlab.packet.MacAddress;
@@ -42,8 +40,7 @@ import org.onosproject.incubator.net.routing.ResolvedRoute;
 import org.onosproject.incubator.net.routing.RouteEvent;
 import org.onosproject.incubator.net.routing.RouteListener;
 import org.onosproject.incubator.net.routing.RouteService;
-import org.onosproject.net.ConnectPoint;
-import org.onosproject.net.FilteredConnectPoint;
+import org.onosproject.net.*;
 import org.onosproject.net.flow.DefaultTrafficSelector;
 import org.onosproject.net.flow.DefaultTrafficTreatment;
 import org.onosproject.net.flow.FlowEntry;
@@ -56,19 +53,15 @@ import org.onosproject.net.flow.TrafficTreatment;
 import org.onosproject.net.flow.criteria.Criterion;
 import org.onosproject.net.intent.*;
 import org.onosproject.net.intent.constraint.PartialFailureConstraint;
+import org.onosproject.net.link.LinkService;
 import org.onosproject.net.statistic.StatisticStore;
+import org.onosproject.net.topology.TopologyStore;
 import org.onosproject.routing.IntentSynchronizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import sun.print.IPPPrintService;
 
-import javax.crypto.Mac;
-import java.lang.reflect.Array;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.List;
-import java.util.ArrayList;
 
 /**
  * FIB component of SDN-IP.
@@ -95,6 +88,12 @@ public class SdnIpFib {
     @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
     protected StatisticStore statisticStore;
 
+    @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
+    protected TopologyStore store;
+
+    @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
+    protected LinkService linkService;
+
     private final InternalRouteListener routeListener = new InternalRouteListener();
     private final InternalInterfaceListener interfaceListener = new InternalInterfaceListener();
     private final InternalFlowRuleListener flowStatsListener = new InternalFlowRuleListener();
@@ -104,16 +103,26 @@ public class SdnIpFib {
     protected static final ImmutableList<Constraint> CONSTRAINTS
             = ImmutableList.of(new PartialFailureConstraint());
 
+    //of:00000000000000a4
+
+    public final static String Dev1 = "of:00000000000000a1";
+    public final static String Dev2 = "of:00000000000000a2";
+    public final static String Dev3 = "of:00000000000000a3";
+    public final static String Dev4 = "of:00000000000000a4";
+    public final static String Dev5 = "of:00000000000000a5";
+    public final static String Dev6 = "of:00000000000000a6";
+
+
     private final Map<IpPrefix, MultiPointToSinglePointIntent> routeIntents
             = new ConcurrentHashMap<>();
 
-    private final Map<Key, PointToPointIntent> routeIntentsSingle
+    private final Map<Key, Intent> routeIntentsSingle
             = new ConcurrentHashMap<>();
 
-    private final Map<ConnectPoint,ArrayList<IpPrefix>> Announcements
+    private final Map<ConnectPoint,ArrayList<IpPrefix>> announcements
             = new ConcurrentHashMap<>();
 
-    private final Map<ConnectPoint,MacAddress> MacPrefix
+    private final Map<ConnectPoint,MacAddress> macPrefix
             = new ConcurrentHashMap<>();
 
     private final Map<Pair<IpPrefix,IpPrefix>, ArrayList<Long[]>> TM
@@ -149,13 +158,13 @@ public class SdnIpFib {
             //MultiPointToSinglePointIntent intent =
             //        generateRouteIntent(prefix, route.nextHop(), route.nextHopMac());
 
-            ArrayList<PointToPointIntent> ArrayIntent =
+            ArrayList<Intent> arrayIntent =
                     generateSrcDstRouteIntent(prefix, route.nextHop(), route.nextHopMac());
 
-            for(int i=0; i<ArrayIntent.size();i++)
+            for(int i=0; i<arrayIntent.size();i++)
             {
-                routeIntentsSingle.put(ArrayIntent.get(i).key(), ArrayIntent.get(i));
-                intentSynchronizer.submit(ArrayIntent.get(i));
+                routeIntentsSingle.put(arrayIntent.get(i).key(), arrayIntent.get(i));
+                intentSynchronizer.submit(arrayIntent.get(i));
             }
 
         }
@@ -163,27 +172,18 @@ public class SdnIpFib {
 
     private void withdraw(ResolvedRoute route) {
         synchronized (this) {
-            /*IpPrefix prefix = route.prefix();
-            //TODO Mattia: handle removal of PointToPoint with routeIntentsSingle
-            MultiPointToSinglePointIntent intent = routeIntents.remove(prefix);
-            if (intent == null) {
-                log.trace("SDN-IP no intent in routeIntents to delete " +
-                        "for prefix: {}", prefix);
-                return;
-            }
-            intentSynchronizer.withdraw(intent);*/
 
             IpPrefix prefix = route.prefix();
 
             ArrayList<IpPrefix> DST = SRCDST.get(prefix);
             for (int i=0;i<DST.size();i++){
-                String KeyStringAB = prefix.toString().concat("-").concat(DST.get(i).toString());
-                String KeyStringBA = DST.get(i).toString().concat("-").concat(prefix.toString());
-                Key KeyRemovedAB = Key.of(KeyStringAB, appId);
-                Key KeyRemovedBA = Key.of(KeyStringBA, appId);
+                String keyStringAB = prefix.toString().concat("-").concat(DST.get(i).toString());
+                String keyStringBA = DST.get(i).toString().concat("-").concat(prefix.toString());
+                Key keyRemovedAB = Key.of(keyStringAB, appId);
+                Key keyRemovedBA = Key.of(keyStringBA, appId);
 
-                PointToPointIntent intentAB = routeIntentsSingle.remove(KeyRemovedAB);
-                PointToPointIntent intentBA = routeIntentsSingle.remove(KeyRemovedBA);
+                Intent intentAB = routeIntentsSingle.remove(keyRemovedAB);
+                Intent intentBA = routeIntentsSingle.remove(keyRemovedBA);
                 intentSynchronizer.withdraw(intentAB);
                 intentSynchronizer.withdraw(intentBA);
 
@@ -274,11 +274,69 @@ public class SdnIpFib {
                 .build();
     }
 
+    private Intent generateIntent(Interface ingressInterface, IpPrefix ingressPrefix, ConnectPoint ingressCP,
+                                              Interface egressInterface, IpPrefix egressPrefix, ConnectPoint egressCP,
+                                              MacAddress egressMAC, List<Link> links) {
+
+        //Ingress
+        TrafficSelector.Builder selectorIn =
+                buildIngressTrafficSelector(ingressInterface, ingressPrefix);
+        FilteredConnectPoint ingressFilteredCP =
+                new FilteredConnectPoint(ingressCP, selectorIn.build());
 
 
+        //Egress
+        TrafficSelector.Builder selectorOut =
+                buildEgressTrafficSelector(egressInterface, egressPrefix);
+        FilteredConnectPoint egressFilteredCP =
+                new FilteredConnectPoint(egressCP, selectorOut.build());
 
-    // Nuova funzine generazione Intent PointToPoint
-    private ArrayList<PointToPointIntent> generateSrcDstRouteIntent(
+
+        TrafficSelector.Builder selector = DefaultTrafficSelector.builder();
+        selector.matchIPSrc(ingressPrefix).matchIPDst(egressPrefix);
+
+        // Build treatment: rewrite the destination MAC address
+        TrafficTreatment.Builder treatment = DefaultTrafficTreatment.builder()
+                .setEthDst(egressMAC);
+
+        // Set priority
+        int priority =
+                egressPrefix.prefixLength() * PRIORITY_MULTIPLIER + PRIORITY_OFFSET;
+
+        // Set key
+        Key key = Key.of(ingressPrefix.toString().concat("-").concat(egressPrefix.toString()), appId);
+
+        if (links == null) {
+            return PointToPointIntent.builder()
+                    .appId(appId)
+                    .key(key)
+                    .selector(selector.build())
+                    .filteredIngressPoint(ingressFilteredCP)
+                    .filteredEgressPoint(egressFilteredCP)
+                    .treatment(treatment.build())
+                    .priority(priority)
+                    .constraints(CONSTRAINTS)
+                    .build();
+        } else {
+            return LinkCollectionIntent.builder()
+                    .appId(appId)
+                    .key(key)
+                    .selector(selector.build())
+                    .filteredIngressPoints(ImmutableSet.of(ingressFilteredCP))
+                    .filteredEgressPoints(ImmutableSet.of(egressFilteredCP))
+                    .treatment(treatment.build())
+                    .priority(priority)
+                    .constraints(CONSTRAINTS)
+                    .links(ImmutableSet.copyOf(links))
+                    .applyTreatmentOnEgress(true)
+                    .cost(1)
+                    .build();
+        }
+    }
+
+
+    // Nuova funzine generazione Intents
+    private ArrayList<Intent> generateSrcDstRouteIntent(
             IpPrefix announcedPrefix,
             IpAddress nextHopIpAddress,
             MacAddress nextHopMacAddress) {
@@ -294,20 +352,20 @@ public class SdnIpFib {
 
         //non uso lo stesso temp di connectpoint perchè sul link potrei avere più
         //di un router quindi evito eventuallli mismatch
-        if(Announcements.containsKey(announceInterface.connectPoint()))
+        if(announcements.containsKey(announceInterface.connectPoint()))
         {
-            Announcements.get(announceInterface.connectPoint()).add(announcedPrefix);
+            announcements.get(announceInterface.connectPoint()).add(announcedPrefix);
         }
         else
         {
             ArrayList<IpPrefix> temp = new ArrayList<IpPrefix>();
             temp.add(announcedPrefix);
-            Announcements.put(announceInterface.connectPoint(),temp);
+            announcements.put(announceInterface.connectPoint(),temp);
         }
 
-        MacPrefix.put(announceInterface.connectPoint(),nextHopMacAddress);
+        macPrefix.put(announceInterface.connectPoint(),nextHopMacAddress);
 
-        ArrayList<PointToPointIntent> ArrayProva = new ArrayList<PointToPointIntent>();
+        ArrayList<Intent> intentsArrayList = new ArrayList<Intent>();
 
         // TODO this should be only peering interfaces
         interfaceService.getInterfaces().forEach(ingressInterface -> {
@@ -315,7 +373,7 @@ public class SdnIpFib {
             //dentro non viene visto SRC=DST
             if (validIngressIntf(ingressInterface, announceInterface)) {
 
-                for (Map.Entry<ConnectPoint, ArrayList<IpPrefix>> entry : Announcements.entrySet())
+                for (Map.Entry<ConnectPoint, ArrayList<IpPrefix>> entry : announcements.entrySet())
                 {
                     ConnectPoint ingressCP = entry.getKey();
                     ArrayList<IpPrefix> prefixSubnet = entry.getValue();
@@ -327,103 +385,51 @@ public class SdnIpFib {
                         {
 
                             if(prefixSubnet.get(j).equals(announcedPrefix)==false) {
+                                List<Link> linksAB = null;
+                                List<Link> linksBA = null;
 
-                                //Ingress
-                                TrafficSelector.Builder selectorInAB =
-                                        buildIngressTrafficSelector(ingressInterface, prefixSubnet.get(j));
-                                FilteredConnectPoint ingressFilteredCPAB =
-                                        new FilteredConnectPoint(ingressCP, selectorInAB.build());
+                                if (ingressCP.deviceId().equals(DeviceId.deviceId(Dev1)) && announceInterface.connectPoint().deviceId().equals(DeviceId.deviceId(Dev5))) {
 
+                                    //Get path using ONOS
+                                    //links = store.getPaths(store.currentTopology(), DeviceId.deviceId(Dev1), DeviceId.deviceId(Dev6)).iterator().next().links();
+                                    //TODO data una sequenza di DeviceId, tornare la lista di Links facendo intersezione getDeviceEgressLinks e getDeviceIngressLinks.
+                                    //fare una funzione che ha come parametro arraylist<DeviId> e ritorna una List<Link>
+                                    ArrayList<DeviceId> listDevice = new ArrayList<DeviceId>();
+                                    listDevice.add(DeviceId.deviceId(Dev1));
+                                    listDevice.add(DeviceId.deviceId(Dev2));
+                                    listDevice.add(DeviceId.deviceId(Dev4));
+                                    listDevice.add(DeviceId.deviceId(Dev3));
+                                    listDevice.add(DeviceId.deviceId(Dev5));
+                                    linksAB = CreateManualPath(listDevice);
+                                    //modifico l'ordine dei DeviceID per creare anche il path inverso usando gli stessi link
+                                    Collections.reverse(listDevice);
+                                    linksBA = CreateManualPath(listDevice);
+                                }
 
-                                //Egress
-                                TrafficSelector.Builder selectorOutAB =
-                                        buildEgressTrafficSelector(announceInterface, announcedPrefix);
-                                FilteredConnectPoint egressFilteredCPAB =
-                                        new FilteredConnectPoint(announceInterface.connectPoint(), selectorOutAB.build());
+                                //B is the device I received the announce from
+                                Intent singleIntentAB = generateIntent(ingressInterface, prefixSubnet.get(j), ingressCP,
+                                        announceInterface, announcedPrefix, announceInterface.connectPoint(), nextHopMacAddress, linksAB);
 
+                                intentsArrayList.add(singleIntentAB);
 
-                                TrafficSelector.Builder selectorAB = DefaultTrafficSelector.builder();
-                                selectorAB.matchIPSrc(prefixSubnet.get(j)).matchIPDst(announcedPrefix);
+                                Intent singleIntentBA = generateIntent(announceInterface, announcedPrefix, announceInterface.connectPoint(),
+                                        ingressInterface, prefixSubnet.get(j), ingressCP, macPrefix.get(ingressCP), linksBA);
 
-                                // Build treatment: rewrite the destination MAC address
-                                TrafficTreatment.Builder treatmentAB = DefaultTrafficTreatment.builder()
-                                        .setEthDst(nextHopMacAddress);
-
-                                // Set priority
-                                int priority =
-                                        announcedPrefix.prefixLength() * PRIORITY_MULTIPLIER + PRIORITY_OFFSET;
-
-                                // Set key
-                                String key2 = prefixSubnet.get(j).toString().concat("-").concat(announcedPrefix.toString());
-                                Key keyAB = Key.of(key2, appId);
-
-                                // Intent A->B
-                                PointToPointIntent SingleIntentAB = PointToPointIntent.builder()
-                                        .appId(appId)
-                                        .key(keyAB)
-                                        .selector(selectorAB.build())
-                                        .filteredIngressPoint(ingressFilteredCPAB)
-                                        .filteredEgressPoint(egressFilteredCPAB)
-                                        .treatment(treatmentAB.build())
-                                        .priority(priority)
-                                        .constraints(CONSTRAINTS)
-                                        .build();
-
-                                ArrayProva.add(SingleIntentAB);
-
-                                //Ingress
-                                TrafficSelector.Builder selectorInBA =
-                                        buildIngressTrafficSelector(announceInterface, announcedPrefix);
-                                FilteredConnectPoint ingressFilteredCPBA =
-                                        new FilteredConnectPoint(announceInterface.connectPoint(), selectorInBA.build());
-
-                                //Egress
-                                TrafficSelector.Builder selectorOutBA =
-                                        buildEgressTrafficSelector(ingressInterface, prefixSubnet.get(j));
-                                FilteredConnectPoint egressFilteredCPBA =
-                                        new FilteredConnectPoint(ingressCP, selectorOutBA.build());
-
-
-                                TrafficSelector.Builder selectorBA = DefaultTrafficSelector.builder();
-                                selectorBA.matchIPDst(prefixSubnet.get(j)).matchIPSrc(announcedPrefix);
-
-                                // Build treatment: rewrite the destination MAC address
-
-
-                                TrafficTreatment.Builder treatmentBA = DefaultTrafficTreatment.builder()
-                                        .setEthDst(MacPrefix.get(ingressCP));
-
-                                // Set key
-                                String key3 = announcedPrefix.toString().concat("-").concat(prefixSubnet.get(j).toString());
-                                Key keyBA = Key.of(key3, appId);
-
-                                // Intent B->A
-                                PointToPointIntent SingleIntentBA = PointToPointIntent.builder()
-                                        .appId(appId)
-                                        .key(keyBA)
-                                        .selector(selectorBA.build())
-                                        .filteredIngressPoint(ingressFilteredCPBA)
-                                        .filteredEgressPoint(egressFilteredCPBA)
-                                        .treatment(treatmentBA.build())
-                                        .priority(priority)
-                                        .constraints(CONSTRAINTS)
-                                        .build();
-
-                                ArrayProva.add(SingleIntentBA);
+                                intentsArrayList.add(singleIntentBA);
 
                                 //Salvataggio in TM della chiave SRC-DST e DST-SRC appena creata
-                                ArrayList<Long[]> Temp = new ArrayList<Long[]>();
+                                ArrayList<Long[]> temp = new ArrayList<Long[]>();
                                 //se uso lo stesso Arraylist, viene indicizzato in entrambe le chiavi e quindi qunado aggiungo
                                 //ad una chiave anche l'opposto aumenta
-                                ArrayList<Long[]> Temp2 = new ArrayList<Long[]>();
+                                ArrayList<Long[]> temp2 = new ArrayList<Long[]>();
 
 
                                 //SRC-DST
-                                Pair <IpPrefix,IpPrefix> Key1 = new Pair(prefixSubnet.get(j), announcedPrefix);
-                                TM.put(Key1, Temp);
+                                Pair <IpPrefix,IpPrefix> key1 = new Pair(prefixSubnet.get(j), announcedPrefix);
+                                TM.put(key1, temp);
                                 //DST-SRC
-                                Pair <IpPrefix,IpPrefix> Key2 = new Pair(announcedPrefix, prefixSubnet.get(j));
-                                TM.put(Key2, Temp2);
+                                Pair <IpPrefix,IpPrefix> key2 = new Pair(announcedPrefix, prefixSubnet.get(j));
+                                TM.put(key2, temp2);
 
 
                                 //SRC-DST
@@ -433,9 +439,9 @@ public class SdnIpFib {
                                 }
                                 else
                                 {
-                                    ArrayList<IpPrefix> temp = new ArrayList<IpPrefix>();
-                                    temp.add(prefixSubnet.get(j));
-                                    SRCDST.put(announcedPrefix,temp);
+                                    ArrayList<IpPrefix> tempIP = new ArrayList<IpPrefix>();
+                                    tempIP.add(prefixSubnet.get(j));
+                                    SRCDST.put(announcedPrefix,tempIP);
                                 }
 
                                 //DST-SRC
@@ -445,9 +451,9 @@ public class SdnIpFib {
                                 }
                                 else
                                 {
-                                    ArrayList<IpPrefix> temp2 = new ArrayList<IpPrefix>();
-                                    temp.add(announcedPrefix);
-                                    SRCDST.put(prefixSubnet.get(j),temp2);
+                                    ArrayList<IpPrefix> temp2IP = new ArrayList<IpPrefix>();
+                                    temp2IP.add(announcedPrefix);
+                                    SRCDST.put(prefixSubnet.get(j),temp2IP);
                                 }
                             }
                         }
@@ -456,9 +462,34 @@ public class SdnIpFib {
             }
         });
 
-        return ArrayProva;
+        return intentsArrayList;
 
     }
+
+    private List<Link> CreateManualPath (ArrayList<DeviceId> listDevice)
+    {
+
+        List<Link> path = new ArrayList<Link>();
+        for(int i=0;i<listDevice.size()-1;i++)
+        {
+            DeviceId devEgress = listDevice.get(i);
+            DeviceId devIngress = listDevice.get(i+1);
+            // The common Link between DevEgress and DevIngress is the intersection of their links
+            Set<Link> common_links = new HashSet<Link>(linkService.getDeviceEgressLinks(devEgress));
+            common_links.retainAll(linkService.getDeviceIngressLinks(devIngress));
+            //if size 0, error
+            //if size 1, path.add()
+            //if size 2, path.add() ma poi informare che ne ha trovati più di 1 e che ha preso il primo
+            if (common_links.size()==1) {
+                path.add(common_links.iterator().next());
+            } else {
+                log.warn("%d links found between node %s and node %s!",
+                        common_links.size(), devEgress.toString(), devIngress.toString());
+            }
+        }
+        return path;
+    }
+
 
     private void addInterface(Interface intf) {
         synchronized (this) {
@@ -690,47 +721,18 @@ public class SdnIpFib {
                         if (SRCRule != null && DSTRule != null) {
 
                             //Tramuto Criterion in IPPrefix
-                            IpPrefix SRC = IpPrefix.valueOf(RemovePrefixString(SRCRule));
-                            IpPrefix DST = IpPrefix.valueOf(RemovePrefixString(DSTRule));
+                            IpPrefix SRC = IpPrefix.valueOf(removePrefixString(SRCRule));
+                            IpPrefix DST = IpPrefix.valueOf(removePrefixString(DSTRule));
 
-                            Pair<IpPrefix, IpPrefix> Chiave = new Pair(SRC, DST);
+                            Pair<IpPrefix, IpPrefix> chiave = new Pair(SRC, DST);
 
-                            if (TM.containsKey(Chiave)) {
-                                Long[] Data = new Long[2];
-                                Data[0] = (((FlowEntry) rule).bytes());
-                                Data[1] = (((FlowEntry) rule).life());
+                            if (TM.containsKey(chiave)) {
+                                Long[] data = new Long[2];
+                                data[0] = (((FlowEntry) rule).bytes());
+                                data[1] = (((FlowEntry) rule).life());
                                 //aggiunge ad entrambe le chiavi
-                                TM.get(Chiave).add(Data);
-                                //log.info("SRC : {} - DST: {} , {} ", SRC,DST,Chiave.hashCode());
-
-
-                                StringBuffer tmp = new StringBuffer();
-                                tmp.append(String.format("\nTM[%s]\n", Chiave));
-                                tmp.append("bytes\tlife\n");
-                                for (int i = 0; i < TM.get(Chiave).size(); i++) {
-                                    tmp.append(String.format("%s\t%s\n", TM.get(Chiave).get(i)[0].toString(),
-                                                             TM.get(Chiave).get(i)[1].toString()));
-                                }
-
-                                log.info(tmp.toString());
-
+                                TM.get(chiave).add(data);
                             }
-
-                            /* for (Map.Entry<Pair<IpPrefix, IpPrefix>, ArrayList<Long[]>> Stats : TM.entrySet()) {
-                                IpPrefix TMSRC = Stats.getKey().getKey();
-                                IpPrefix TMDST = Stats.getKey().getValue();
-                                if (SRC.equals(TMSRC.toString()) && DST.equals(TMDST.toString())) {
-                                    Long[] Data = new Long[2];
-                                    Data[0] = (((FlowEntry) rule).bytes());
-                                    Data[1] = (((FlowEntry) rule).life());
-                                    Stats.getValue().add(Data);
-                                    StringBuffer tmp = new StringBuffer();
-                                    tmp.append(String.format("\nTM[%s]\n", Stats.getKey()));
-                                    tmp.append("bytes\tlife\n");
-                                    for (int i =0; i< Stats.getValue().size(); i++) {
-                                        tmp.append(String.format("%s\t%s\n", Stats.getValue().get(i)[0].toString(),Stats.getValue().get(i)[1].toString()));
-                                    }
-                                    log.info(tmp.toString());*/
                         }
                     }
                     break;
@@ -748,30 +750,43 @@ public class SdnIpFib {
 
     //Rimuove la parte di stringa iniziale di Criterion. Returna Ip completo di
     //Address e PrefixLenght.
-    private String RemovePrefixString (Criterion Rule)
+    private String removePrefixString (Criterion rule)
     {
-        String Temp = Rule.toString();
-        String Sub = Temp.substring(9);
-        return Sub;
+        String temp = rule.toString();
+        String sub = temp.substring(9);
+        return sub;
     }
 
     //Estrae PrefixLenght
     private int ExtractPrefix (Criterion Rule)
     {
-        String Temp = RemovePrefixString(Rule);
-        int index = Temp.indexOf("/");
-        int PrefixLenght = Integer.parseInt(Temp.substring(index+1));
-        return PrefixLenght;
+        String temp = removePrefixString(Rule);
+        int index = temp.indexOf("/");
+        int prefixLenght = Integer.parseInt(temp.substring(index+1));
+        return prefixLenght;
 
     }
 
     //estrae IpAddress senza PrefixLength
-    private String ExtractAddress (Criterion Rule)
+    private String extractAddress(Criterion rule)
     {
-        String Temp = RemovePrefixString(Rule);
-        int index = Temp.indexOf("/");
-        String Address = Temp.substring(0,(index));
-        return Address;
+        String temp = removePrefixString(rule);
+        int index = temp.indexOf("/");
+        String address = temp.substring(0,(index));
+        return address;
+    }
+
+    private void stampaTM (Pair<IpPrefix, IpPrefix> chiave, IpPrefix SRC, IpPrefix DST){
+            log.info("SRC : {} - DST: {} , {} ", SRC,DST,chiave.hashCode());
+            StringBuffer tmp = new StringBuffer();
+            tmp.append(String.format("\nTM[%s]\n", chiave));
+            tmp.append("bytes\tlife\n");
+            for (int i = 0; i < TM.get(chiave).size(); i++) {
+                tmp.append(String.format("%s\t%s\n", TM.get(chiave).get(i)[0].toString(),
+                                         TM.get(chiave).get(i)[1].toString()));
+            }
+
+            log.info(tmp.toString());
     }
 
 }
