@@ -20,11 +20,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import javafx.util.Pair;
-import org.apache.felix.scr.annotations.Activate;
-import org.apache.felix.scr.annotations.Component;
-import org.apache.felix.scr.annotations.Deactivate;
-import org.apache.felix.scr.annotations.Reference;
-import org.apache.felix.scr.annotations.ReferenceCardinality;
 import org.onlab.packet.Ethernet;
 import org.onlab.packet.IpAddress;
 import org.onlab.packet.IpPrefix;
@@ -63,11 +58,13 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+
 /**
  * FIB component of SDN-IP.
  */
 @Component(immediate = true, enabled = false)
-public class SdnIpFib {
+@Service
+public class SdnIpFib implements SdnIpFibService {
     private Logger log = LoggerFactory.getLogger(getClass());
 
     @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
@@ -102,8 +99,6 @@ public class SdnIpFib {
     private static final int PRIORITY_MULTIPLIER = 5;
     protected static final ImmutableList<Constraint> CONSTRAINTS
             = ImmutableList.of(new PartialFailureConstraint());
-
-    //of:00000000000000a4
 
     public final static String Dev1 = "of:00000000000000a1";
     public final static String Dev2 = "of:00000000000000a2";
@@ -153,10 +148,6 @@ public class SdnIpFib {
         synchronized (this) {
             IpPrefix prefix = route.prefix();
             log.info("Arrivato update per {}", prefix.toString());
-
-
-            //MultiPointToSinglePointIntent intent =
-            //        generateRouteIntent(prefix, route.nextHop(), route.nextHopMac());
 
             ArrayList<Intent> arrayIntent =
                     generateSrcDstRouteIntent(prefix, route.nextHop(), route.nextHopMac());
@@ -351,7 +342,7 @@ public class SdnIpFib {
         }
 
         //non uso lo stesso temp di connectpoint perchè sul link potrei avere più
-        //di un router quindi evito eventuallli mismatch
+        //di un router quindi evito eventuali mismatch
         if(announcements.containsKey(announceInterface.connectPoint()))
         {
             announcements.get(announceInterface.connectPoint()).add(announcedPrefix);
@@ -392,8 +383,6 @@ public class SdnIpFib {
 
                                     //Get path using ONOS
                                     //links = store.getPaths(store.currentTopology(), DeviceId.deviceId(Dev1), DeviceId.deviceId(Dev6)).iterator().next().links();
-                                    //TODO data una sequenza di DeviceId, tornare la lista di Links facendo intersezione getDeviceEgressLinks e getDeviceIngressLinks.
-                                    //fare una funzione che ha come parametro arraylist<DeviId> e ritorna una List<Link>
                                     ArrayList<DeviceId> listDevice = new ArrayList<DeviceId>();
                                     listDevice.add(DeviceId.deviceId(Dev1));
                                     listDevice.add(DeviceId.deviceId(Dev2));
@@ -787,6 +776,16 @@ public class SdnIpFib {
             }
 
             log.info(tmp.toString());
+    }
+
+    public String getTMs() {
+        log.info("getTMs()");
+        return "getTMs!!!";
+    }
+
+    public String setRouting() {
+        log.info("setRouting()");
+        return "setRouting!!!";
     }
 
 }

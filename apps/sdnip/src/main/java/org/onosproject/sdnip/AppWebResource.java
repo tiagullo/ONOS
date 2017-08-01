@@ -23,26 +23,31 @@ import org.onosproject.core.CoreService;
 import org.onosproject.rest.AbstractWebResource;
 
 import javax.ws.rs.GET;
+import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.core.Response;
 
 import static org.onlab.util.Tools.nullIsNotFound;
 
-/**
- * Sample web resource.
- */
-@Path("sample")
+@Path("")
 public class AppWebResource extends AbstractWebResource {
 
-    /**
-     * Get hello world greeting.
-     *
-     * @return 200 OK
-     */
+    private SdnIpFibService service;
+
+    // http://localhost:8181/onos/v1/sdnip/get_tm
     @GET
-    @Path("")
-    public Response getGreeting() {
-        ObjectNode node = mapper().createObjectNode().put("hello", "world");
+    @Path("get_tm")
+    public Response getTMs() {
+        service = get(SdnIpFibService.class);
+        ObjectNode node = mapper().createObjectNode().put("response", service.getTMs());
+        return ok(node).build();
+    }
+
+    @PUT
+    @Path("set_routing")
+    public Response setRouting() {
+        service = get(SdnIpFibService.class);
+        ObjectNode node = mapper().createObjectNode().put("response", service.setRouting());
         return ok(node).build();
     }
 
