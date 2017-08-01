@@ -2,6 +2,10 @@ COMPILE_DEPS = [
     '//lib:CORE_DEPS',
     '//incubator/api:onos-incubator-api',
     '//apps/routing-api:onos-apps-routing-api',
+    '//lib:javax.ws.rs-api',
+    '//utils/rest:onlab-rest',
+    '//lib:jersey-server',
+    '//core/store/serializers:onos-core-serializers',
 ]
 
 BUNDLES = [
@@ -19,6 +23,8 @@ TEST_DEPS = [
 osgi_jar_with_tests (
     deps = COMPILE_DEPS,
     test_deps = TEST_DEPS,
+    web_context = '/onos/v1/sdnip',
+
 )
 
 onos_app (
