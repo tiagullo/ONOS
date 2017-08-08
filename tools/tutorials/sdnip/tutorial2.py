@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 from mininet.cli import CLI
-from mininet.log import info, debug
+from mininet.log import info, debug, setLogLevel
 from mininet.net import Mininet
 from mininet.node import Host, RemoteController
 from mininet.topo import Topo
@@ -73,6 +73,7 @@ class SdnIpTopo( Topo ):
 
         for i in range(1, 5+1):
             name = 'r%s' % i
+	    # Use 10.0.9.1 instead of 10.0.2.1 to avoid conflicts with VirtualBox iface
 	    if (i==2):
 		 eth0 = { 'mac' : '0a:00:00:00:0%s:01' % 9,
                      'ipAddrs' : ['10.0.%s.1/24' % 9] }
@@ -81,21 +82,16 @@ class SdnIpTopo( Topo ):
                      'ipAddrs' : ['10.0.%s.1/24' % i] }
 
             eth1 = { 'ipAddrs' : ['192.168.%s.254/24' % i] }
-            eth2 = { 'ipAddrs' : ['192.168.%s0.254/24' % i] }
-            intfs = { '%s-eth0' % name : eth0,
-                      '%s-eth1' % name : eth1,
-		              '%s-eth2' % name : eth2 }
 
 	    # Add a third interface to router R1
-	    '''if i==1:
-                 intfs['r1-eth2']={ 'ipAddrs' : ['192.168.10.254/24'] }
-	    if i==2:
-                 intfs['r2-eth2']={ 'ipAddrs' : ['192.168.20.254/24'] }
-	    if i==3:
-                 intfs['r3-eth2']={ 'ipAddrs' : ['192.168.30.254/24'] }
-	    if i==4:
-                 intfs['r4-eth2']={ 'ipAddrs' : ['192.168.40.254/24'] }'''
-
+	    if (i==1):
+		eth2 = { 'ipAddrs' : ['192.168.%s0.254/24' % i] }
+		intfs = { '%s-eth0' % name : eth0,
+                          '%s-eth1' % name : eth1,
+                          '%s-eth2' % name : eth2 }
+	    else:
+                intfs = { '%s-eth0' % name : eth0,
+                          '%s-eth1' % name : eth1 }
 
             quaggaConf = '%s/quagga%s.conf' % (CONFIG_DIR, i)
 
@@ -106,34 +102,21 @@ class SdnIpTopo( Topo ):
                                 ip='192.168.%s.1/24' % i,
                                 route='192.168.%s.254' % i)
 
-            host2 = self.addHost('h%s0' % i, cls=SdnIpHost,
-                                ip='192.168.%s0.1/24' % i,
-                                route='192.168.%s0.254' % i)
+	    # Add a second host to router R1
+	    if (i==1):
+		host2 = self.addHost('h%s0' % i, cls=SdnIpHost,
+                        ip='192.168.%s0.1/24' % i,
+                        route='192.168.%s0.254' % i)
 
-	    '''# Add an additional host connected to router
-            if i==1:
-	         host2 = self.addHost('h10', cls=SdnIpHost,
-                               ip='192.168.10.1/24',
-                               route='192.168.10.254')
-	    if i==2:
-	         host2 = self.addHost('h20', cls=SdnIpHost,
-                               ip='192.168.20.1/24',
-                               route='192.168.20.254')
-	    if i==3:
-	         host2 = self.addHost('h30', cls=SdnIpHost,
-                               ip='192.168.30.1/24',
-                               route='192.168.30.254')
-	    if i==4:
-	         host2 = self.addHost('h40', cls=SdnIpHost,
-                               ip='192.168.40.1/24',
-                               route='192.168.40.254')'''
-            if(i==5):
-             self.addLink(router, attachmentSwitches[0])
+	    # Attach router R5 to switch S1
+            if (i==5):
+		self.addLink(router, attachmentSwitches[0])
             else:
-             self.addLink(router, attachmentSwitches[i-1])
+		self.addLink(router, attachmentSwitches[i-1])
 
             self.addLink(router, host)
-            self.addLink(router, host2)
+            if (i==1):
+		self.addLink(router, host2)
 
         # Set up the internal BGP speaker
         bgpEth0 = { 'mac':'00:00:00:00:00:01',
