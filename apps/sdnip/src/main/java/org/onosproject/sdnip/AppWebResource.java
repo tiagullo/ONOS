@@ -35,6 +35,7 @@ public class AppWebResource extends AbstractWebResource {
     private SdnIpFibService service;
 
     // http://localhost:8181/onos/v1/sdnip/get_tm
+    // $ curl --user onos:rocks http://localhost:8181/onos/v1/sdnip/get_tm
     @GET
     @Path("get_tm")
     public Response getTMs() {
