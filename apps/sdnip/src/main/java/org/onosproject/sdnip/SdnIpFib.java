@@ -16,6 +16,9 @@
 
 package org.onosproject.sdnip;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
@@ -123,6 +126,8 @@ public class SdnIpFib implements SdnIpFibService {
 
     private final Map<Pair<IpPrefix,IpPrefix>, ArrayList<Long[]>> TM
             = new ConcurrentHashMap<>();
+
+    private final LinkedList<TMSample> TMSamples = new LinkedList<>();
 
     //Mappa di supporto per riferimento Route SRC-DST
     private final Map<IpPrefix,ArrayList<IpPrefix>> SRCDST
@@ -696,10 +701,10 @@ public class SdnIpFib implements SdnIpFibService {
      * Internal flow rule event listener.
      */
     private class InternalFlowRuleListener implements FlowRuleListener {
-
         @Override
         public void event(FlowRuleEvent event) {
             //TODO add syncronized?
+            //TODO take a look at DistributedFlowStatisticStore class
             FlowRule rule = event.subject();
             switch (event.type()) {
                 case RULE_ADDED:
@@ -708,6 +713,7 @@ public class SdnIpFib implements SdnIpFibService {
                     if (rule instanceof FlowEntry) {
                         Criterion SRCRule = rule.selector().getCriterion(Criterion.Type.IPV4_SRC);
                         Criterion DSTRule = rule.selector().getCriterion(Criterion.Type.IPV4_DST);
+                        // check if it matches IPv4 SRC and IPv4 DST
                         if (SRCRule != null && DSTRule != null) {
 
                             //Tramuto Criterion in IPPrefix
@@ -722,6 +728,25 @@ public class SdnIpFib implements SdnIpFibService {
                                 data[1] = (((FlowEntry) rule).life());
                                 //aggiunge ad entrambe le chiavi
                                 TM.get(chiave).add(data);
+
+                                //stampaTM(chiave, SRC, DST);
+                            }
+
+                            //TODO InternalFlowRuleListener is fired 5 times! Milliseconds are slighter different
+                            // Up to now this problem is hanlded on the Python side. Check other apps which "implements FlowRuleListener"
+                            /*
+                            2017-08-15 17:17:56,791 | SdnIpFib | Update 192.168.1.0/24=192.168.3.0/24: 370048 @1502810276
+                            2017-08-15 17:17:56,794 | SdnIpFib | Update 192.168.1.0/24=192.168.3.0/24: 370048 @1502810276
+                            2017-08-15 17:17:56,799 | SdnIpFib | Update 192.168.1.0/24=192.168.3.0/24: 370048 @1502810276
+                            2017-08-15 17:17:56,802 | SdnIpFib | Update 192.168.1.0/24=192.168.3.0/24: 370048 @1502810276
+                            2017-08-15 17:17:56,873 | SdnIpFib | Update 192.168.1.0/24=192.168.3.0/24: 370048 @1502810276
+                             */
+
+                            //only flows from/to announced IP prefixes are tracked and added to TMSamples
+                            if (SRCDST.containsKey(SRC) && SRCDST.containsKey(DST)) {
+                                //NB FlowEntry's life is ignored since we are more interested in the timestamp to be able to align measurements!
+                                TMSamples.add(new TMSample(System.currentTimeMillis()/1000, chiave.toString(), ((FlowEntry) rule).bytes()));
+                                log.info("Update {}: {} @{}", chiave.toString(), (((FlowEntry) rule).bytes()), System.currentTimeMillis()/1000);
                             }
                         }
                     }
@@ -779,9 +804,21 @@ public class SdnIpFib implements SdnIpFibService {
             log.info(tmp.toString());
     }
 
-    public String getTMs() {
-        log.info("getTMs()");
-        return "getTMs!!!";
+    public ArrayNode getTMs() {
+        //TODO replace all the "for each" with the Java8 forEach statement
+
+        //TODO check synchronization with multiple threads etc...
+
+        ArrayNode TMs = new ObjectMapper().createArrayNode();
+
+        ListIterator<TMSample> iter = TMSamples.listIterator();
+        while (iter.hasNext()){
+            TMs.add(iter.next().toJSONnode());
+            //NB TM samples are consumed by the client (i.e. deleted in ONOS)
+            iter.remove();
+        }
+
+        return TMs;
     }
 
     public String setRouting() {

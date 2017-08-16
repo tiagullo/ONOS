@@ -16,10 +16,6 @@
 package org.onosproject.sdnip;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.apache.felix.scr.annotations.Reference;
-import org.apache.felix.scr.annotations.ReferenceCardinality;
-import org.onosproject.app.ApplicationService;
-import org.onosproject.core.CoreService;
 import org.onosproject.rest.AbstractWebResource;
 
 import javax.ws.rs.GET;
@@ -27,28 +23,45 @@ import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.core.Response;
 
-import static org.onlab.util.Tools.nullIsNotFound;
-
 @Path("")
 public class AppWebResource extends AbstractWebResource {
 
-    private SdnIpFibService service;
+    private SdnIpFibService sdnIpFibService;
 
-    // http://localhost:8181/onos/v1/sdnip/get_tm
-    // $ curl --user onos:rocks http://localhost:8181/onos/v1/sdnip/get_tm
+    /*
+    http://localhost:8181/onos/v1/sdnip/get_tm
+    $ curl --user onos:rocks http://localhost:8181/onos/v1/sdnip/get_tm
+    Returns the list of TM samples as JSON
+    {
+        "response": [
+            {
+                "timestamp": 1502806046,
+                "demand": "192.168.1.0/24=192.168.2.0/24",
+                "bytes": 0
+            },
+            {
+                "timestamp": 1502806046,
+                "demand": "192.168.10.0/24=192.168.2.0/24",
+                "bytes": 0
+            }
+        ]
+    }
+    */
     @GET
     @Path("get_tm")
     public Response getTMs() {
-        service = get(SdnIpFibService.class);
-        ObjectNode node = mapper().createObjectNode().put("response", service.getTMs());
-        return ok(node).build();
+        sdnIpFibService = get(SdnIpFibService.class);
+        ObjectNode result = mapper().createObjectNode()
+                .putPOJO("response", sdnIpFibService.getTMs());
+        return ok(result).build();
     }
 
     @PUT
     @Path("set_routing")
     public Response setRouting() {
-        service = get(SdnIpFibService.class);
-        ObjectNode node = mapper().createObjectNode().put("response", service.setRouting());
+        sdnIpFibService = get(SdnIpFibService.class);
+        ObjectNode node = mapper().createObjectNode()
+                .put("response", sdnIpFibService.setRouting());
         return ok(node).build();
     }
 

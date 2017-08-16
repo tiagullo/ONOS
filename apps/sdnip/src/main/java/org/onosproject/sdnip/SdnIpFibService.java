@@ -1,7 +1,9 @@
 package org.onosproject.sdnip;
 
 
+import com.fasterxml.jackson.databind.node.ArrayNode;
+
 public interface SdnIpFibService {
-    public String getTMs();
-    public String setRouting();
+    ArrayNode getTMs();
+    String setRouting();
 }
