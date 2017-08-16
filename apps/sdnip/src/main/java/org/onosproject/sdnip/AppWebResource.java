@@ -56,6 +56,15 @@ public class AppWebResource extends AbstractWebResource {
         return ok(result).build();
     }
 
+    @GET
+    @Path("get_announced_prefix_from_cp")
+    public Response getAnnouncedPrefixesFromCP() {
+        sdnIpFibService = get(SdnIpFibService.class);
+        ObjectNode result = mapper().createObjectNode()
+                .putPOJO("response", sdnIpFibService.getAnnouncedPrefixesFromCP());
+        return ok(result).build();
+    }
+
     @PUT
     @Path("set_routing")
     public Response setRouting() {

@@ -14,8 +14,8 @@ class TMSample {
         this.bytes = bytes;
     }
 
-    ObjectNode toJSONnode() {
-        return new ObjectMapper().createObjectNode()
+    ObjectNode toJSONnode(ObjectMapper mapper) {
+        return mapper.createObjectNode()
                 .put("timestamp", this.timestamp)
                 .put("demand", this.demand)
                 .put("bytes", this.bytes);

@@ -134,6 +134,8 @@ public class SdnIpFib implements SdnIpFibService {
 
     private ApplicationId appId;
 
+    private final ObjectMapper mapper = new ObjectMapper();
+
     @Activate
     public void activate() {
         appId = coreService.getAppId(SdnIp.SDN_IP_APP);
@@ -760,11 +762,11 @@ public class SdnIpFib implements SdnIpFibService {
     public ArrayNode getTMs() {
         //TODO check synchronization with multiple threads etc...
 
-        ArrayNode TMs = new ObjectMapper().createArrayNode();
+        ArrayNode TMs = mapper.createArrayNode();
 
         ListIterator<TMSample> iter = TMSamples.listIterator();
         while (iter.hasNext()){
-            TMs.add(iter.next().toJSONnode());
+            TMs.add(iter.next().toJSONnode(mapper));
             //NB TM samples are consumed by the client (i.e. deleted in ONOS)
             iter.remove();
         }
@@ -775,6 +777,20 @@ public class SdnIpFib implements SdnIpFibService {
     public String setRouting() {
         log.info("setRouting()");
         return "setRouting!!!";
+    }
+
+    public ArrayNode getAnnouncedPrefixesFromCP() {
+        ArrayNode announcedPrefixes = mapper.createArrayNode();
+        announcedPrefixesFromCP.forEach((CP, IpPrefixList) -> {
+            ArrayNode IpPrefixArray = mapper.createArrayNode();
+            IpPrefixList.forEach(IpPrefix -> {
+                IpPrefixArray.add(IpPrefix.toString());
+            });
+            announcedPrefixes.add(mapper.createObjectNode()
+              .put("CP", CP.toString())
+              .putPOJO("IpPrefixList", IpPrefixArray));
+        });
+        return announcedPrefixes;
     }
 
 }
