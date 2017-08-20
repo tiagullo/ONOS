@@ -371,7 +371,7 @@ public class SdnIpFib implements SdnIpFibService {
                         List<Link> linksAB = null;
                         List<Link> linksBA = null;
 
-                        //TODO remove this hardcoded test from Dev1 to Dev6
+                        //TODO remove this hardcoded test from Dev1 to Dev6 (192.168.10.0/24-192.168.3.0/24)
                         if (ingressInterface.connectPoint().deviceId().equals(DeviceId.deviceId(Dev1)) && announceInterface.connectPoint().deviceId().equals(DeviceId.deviceId(Dev5))) {
 
                             //Get the first shortes path using ONOS
@@ -776,6 +776,7 @@ public class SdnIpFib implements SdnIpFibService {
 
     public String setRouting() {
         log.info("setRouting()");
+        //TODO in case len(path)==1 we need to return a links=null so that we just use PointToPointIntent
         return "setRouting!!!";
     }
 

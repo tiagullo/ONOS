@@ -18,9 +18,12 @@ package org.onosproject.sdnip;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.onosproject.rest.AbstractWebResource;
 
+import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
-import javax.ws.rs.PUT;
+import javax.ws.rs.POST;
 import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
 @Path("")
@@ -49,6 +52,7 @@ public class AppWebResource extends AbstractWebResource {
     */
     @GET
     @Path("get_tm")
+    @Produces(MediaType.APPLICATION_JSON)
     public Response getTMs() {
         sdnIpFibService = get(SdnIpFibService.class);
         ObjectNode result = mapper().createObjectNode()
@@ -58,6 +62,7 @@ public class AppWebResource extends AbstractWebResource {
 
     @GET
     @Path("get_announced_prefix_from_cp")
+    @Produces(MediaType.APPLICATION_JSON)
     public Response getAnnouncedPrefixesFromCP() {
         sdnIpFibService = get(SdnIpFibService.class);
         ObjectNode result = mapper().createObjectNode()
@@ -65,8 +70,10 @@ public class AppWebResource extends AbstractWebResource {
         return ok(result).build();
     }
 
-    @PUT
+    @POST
     @Path("set_routing")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Consumes(MediaType.APPLICATION_JSON)
     public Response setRouting() {
         sdnIpFibService = get(SdnIpFibService.class);
         ObjectNode node = mapper().createObjectNode()
