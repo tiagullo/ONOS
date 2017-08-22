@@ -57,7 +57,9 @@ import org.onosproject.net.topology.TopologyStore;
 import org.onosproject.routing.IntentSynchronizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.onosproject.sdnip.data.*;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -126,7 +128,11 @@ public class SdnIpFib implements SdnIpFibService {
     private final Map<Pair<IpPrefix,IpPrefix>, List<Long[]>> TM
             = new ConcurrentHashMap<>();
 
+    //LinkedList has add() and Iterator.remove() in O(1)
     private final List<TMSample> TMSamples = new LinkedList<>();
+
+    private final Map<Integer, RoutingConfiguration> routingConfigurations
+            = new ConcurrentHashMap<>();
 
     //Auxiliary Map to store pairs of non-local prefixes
     private final Map<IpPrefix,List<IpPrefix>> prefixPairs
@@ -135,6 +141,8 @@ public class SdnIpFib implements SdnIpFibService {
     private ApplicationId appId;
 
     private final ObjectMapper mapper = new ObjectMapper();
+
+    private static final boolean KEEP_FLOWS_OF_WITHDRAWN_ROUTES = true;
 
     @Activate
     public void activate() {
@@ -168,26 +176,71 @@ public class SdnIpFib implements SdnIpFibService {
 
     private void withdraw(ResolvedRoute route) {
         synchronized (this) {
-            IpPrefix announcedPrefix = route.prefix();
-            //TODO test
-            log.info("Withdrawn BGP announcement for {}", announcedPrefix.toString());
+            /*
+            We can test this without touching quagga conf file simply with
+            mininet> r1 ifconfig r1-eth0 down
+            mininet> r1 ifconfig r1-eth0 up
+            provided that KEEP_FLOWS_OF_WITHDRAWN_ROUTES = false
+            */
+            IpPrefix withdrawnPrefix = route.prefix();
+            log.info("Withdrawn BGP announcement for {}", withdrawnPrefix.toString());
+            if (KEEP_FLOWS_OF_WITHDRAWN_ROUTES) {
+                /*
+                Why should we put KEEP_FLOWS_OF_WITHDRAWN_ROUTES = True?
+                When an IpPrefix is withdrawn we should:
+                a) uninstall the intents involved
+                b) remove the all the flow pairs (*, IpPrefix) and (IpPrefix, *)
+                   from prefixPairs Map
+                c) forget about the source CP of the announce
+                because:
+                a) we do not want connectivity to/from witdrawn IpPrefix
+                b) we do not want connectivity to/from witdrawn IpPrefix when a
+                   new IpPrefix is announced (we exploit prefixPairs Map)
+                c) we might want to support mobility of IpPrefixes between
+                   different BGP speakers
+                However:
+                1) if a flow is present in at least 1 TM sample, CRR still
+                   consider a 0 bps contribute iwhen no sample is received
+                2) CRR assumes fixed IpPrefixes-CP association (i.e. each demand
+                   does not change its attachment point, otherwise). To allow
+                   mobility We might consider it as a different demand, for ex.)
+                3) the day after the training day, we apply routing also to the
+                   flows which just lived 1 TM sampling period
+                Thus:
+                CRR needs KEEP_FLOWS_OF_WITHDRAWN_ROUTES = True
+                 */
+                return;
+            }
+            if (prefixPairs.containsKey(withdrawnPrefix)) {
+                prefixPairs.get(withdrawnPrefix).forEach(dstPrefix -> {
+                    // remove all the intents involving (withdrawnPrefix, *) and
+                    // (*, withdrawnPrefix) flows
+                    String keyStringAB = withdrawnPrefix.toString().concat("-").concat(dstPrefix.toString());
+                    String keyStringBA = dstPrefix.toString().concat("-").concat(withdrawnPrefix.toString());
+                    Key keyRemovedAB = Key.of(keyStringAB, appId);
+                    Key keyRemovedBA = Key.of(keyStringBA, appId);
 
-            prefixPairs.get(announcedPrefix).forEach(dstPrefix -> {
-                String keyStringAB = announcedPrefix.toString().concat("-").concat(dstPrefix.toString());
-                String keyStringBA = dstPrefix.toString().concat("-").concat(announcedPrefix.toString());
-                Key keyRemovedAB = Key.of(keyStringAB, appId);
-                Key keyRemovedBA = Key.of(keyStringBA, appId);
+                    Intent intentAB = routeIntentsSingle.remove(keyRemovedAB);
+                    Intent intentBA = routeIntentsSingle.remove(keyRemovedBA);
+                    intentSynchronizer.withdraw(intentAB);
+                    intentSynchronizer.withdraw(intentBA);
 
-                Intent intentAB = routeIntentsSingle.remove(keyRemovedAB);
-                Intent intentBA = routeIntentsSingle.remove(keyRemovedBA);
-                intentSynchronizer.withdraw(intentAB);
-                intentSynchronizer.withdraw(intentBA);
+                    //Unlearn the flows (*, withdrawnPrefix)
+                    if (prefixPairs.containsKey(dstPrefix))
+                        prefixPairs.get(dstPrefix).remove(withdrawnPrefix);
 
-                //Unlearn the flows (announcedPrefix , *)
-                prefixPairs.get(dstPrefix).remove(announcedPrefix);
-            });
-            //Unlearn the announcedPrefix
-            prefixPairs.remove(announcedPrefix);
+                });
+                //Unlearn the flows (withdrawnPrefix, *)
+                prefixPairs.remove(withdrawnPrefix);
+            }
+
+            //forget the source CP of the withdrawnPrefix
+            Interface announceInterface =
+                    interfaceService.getMatchingInterface(route.nextHop());
+            if (announceInterface != null &&
+                    announcedPrefixesFromCP.containsKey(announceInterface.connectPoint())) {
+                announcedPrefixesFromCP.get(announceInterface.connectPoint()).remove(withdrawnPrefix);
+            }
         }
     }
 
@@ -346,13 +399,19 @@ public class SdnIpFib implements SdnIpFibService {
             return null;
         }
 
-        //Update the list of announcments received from the CP
-        if (announcedPrefixesFromCP.containsKey(announceInterface.connectPoint()))
-            announcedPrefixesFromCP.get(announceInterface.connectPoint()).add(announcedPrefix);
+        //Update the list of announcements received from the CP
+        ConnectPoint announceCP = announceInterface.connectPoint();
+        if (announcedPrefixesFromCP.containsKey(announceCP)) {
+            //TODO with a set we can avoid .contains()
+            if (!announcedPrefixesFromCP.get(announceCP).contains(announcedPrefix)) {
+                announcedPrefixesFromCP.get(announceCP).add(announcedPrefix);
+            }
+        }
         else
-            announcedPrefixesFromCP.put(announceInterface.connectPoint(), new ArrayList<IpPrefix>(Arrays.asList(announcedPrefix)));
+            announcedPrefixesFromCP.put(announceCP, new ArrayList<IpPrefix>(Arrays.asList(announcedPrefix)));
 
-        MACFromCP.put(announceInterface.connectPoint(), nextHopMacAddress);
+        //Update the MAC of the BGP speaker we received the announcement from
+        MACFromCP.put(announceCP, nextHopMacAddress);
 
         List<Intent> intentsArrayList = new ArrayList<Intent>();
 
@@ -372,7 +431,7 @@ public class SdnIpFib implements SdnIpFibService {
                         List<Link> linksBA = null;
 
                         //TODO remove this hardcoded test from Dev1 to Dev6 (192.168.10.0/24-192.168.3.0/24)
-                        if (ingressInterface.connectPoint().deviceId().equals(DeviceId.deviceId(Dev1)) && announceInterface.connectPoint().deviceId().equals(DeviceId.deviceId(Dev5))) {
+                        if (ingressInterface.connectPoint().deviceId().equals(DeviceId.deviceId(Dev1)) && announceCP.deviceId().equals(DeviceId.deviceId(Dev5))) {
 
                             //Get the first shortes path using ONOS
                             //links = store.getPaths(store.currentTopology(), DeviceId.deviceId(Dev1), DeviceId.deviceId(Dev6)).iterator().next().links();
@@ -392,11 +451,11 @@ public class SdnIpFib implements SdnIpFibService {
                         //A is the device I'm currently iterating over as source device
                         //B is the device I received the announce from (destination device)
                         Intent singleIntentAB = generateSrcDstIntent(ingressInterface, otherAnnouncedPrefix, ingressInterface.connectPoint(),
-                                                               announceInterface, announcedPrefix, announceInterface.connectPoint(), nextHopMacAddress, linksAB);
+                                                               announceInterface, announcedPrefix, announceCP, nextHopMacAddress, linksAB);
 
                         intentsArrayList.add(singleIntentAB);
 
-                        Intent singleIntentBA = generateSrcDstIntent(announceInterface, announcedPrefix, announceInterface.connectPoint(),
+                        Intent singleIntentBA = generateSrcDstIntent(announceInterface, announcedPrefix, announceCP,
                                                                ingressInterface, otherAnnouncedPrefix, ingressInterface.connectPoint(), MACFromCP.get(ingressInterface.connectPoint()), linksBA);
 
                         intentsArrayList.add(singleIntentBA);
@@ -408,14 +467,22 @@ public class SdnIpFib implements SdnIpFibService {
 
 
                         //Add 'otherAnnouncedPrefix' to the list of pairs starting from 'announcedPrefix'
-                        if (prefixPairs.containsKey(announcedPrefix))
-                            prefixPairs.get(announcedPrefix).add(otherAnnouncedPrefix);
+                        if (prefixPairs.containsKey(announcedPrefix)) {
+                            //TODO with a set we can avoid .contains()
+                            if (!prefixPairs.get(announcedPrefix).contains(otherAnnouncedPrefix)) {
+                                prefixPairs.get(announcedPrefix).add(otherAnnouncedPrefix);
+                            }
+                        }
                         else
                             prefixPairs.put(announcedPrefix, new ArrayList<IpPrefix>(Arrays.asList(otherAnnouncedPrefix)));
 
                         //Add 'announcedPrefix' to the list of pairs starting from 'otherAnnouncedPrefix'
-                        if (prefixPairs.containsKey(otherAnnouncedPrefix))
-                            prefixPairs.get(otherAnnouncedPrefix).add(announcedPrefix);
+                        if (prefixPairs.containsKey(otherAnnouncedPrefix)) {
+                            //TODO with a set we can avoid .contains()
+                            if (!prefixPairs.get(otherAnnouncedPrefix).contains(announcedPrefix)) {
+                                prefixPairs.get(otherAnnouncedPrefix).add(announcedPrefix);
+                            }
+                        }
                         else
                             prefixPairs.put(otherAnnouncedPrefix, new ArrayList<IpPrefix>(Arrays.asList(announcedPrefix)));
                     });
@@ -762,22 +829,34 @@ public class SdnIpFib implements SdnIpFibService {
     public ArrayNode getTMs() {
         //TODO check synchronization with multiple threads etc...
 
-        ArrayNode TMs = mapper.createArrayNode();
+        ArrayNode TMSamplesArray = mapper.createArrayNode();
 
         ListIterator<TMSample> iter = TMSamples.listIterator();
         while (iter.hasNext()){
-            TMs.add(iter.next().toJSONnode(mapper));
+            TMSamplesArray.add(iter.next().toJSONnode(mapper));
             //NB TM samples are consumed by the client (i.e. deleted in ONOS)
             iter.remove();
         }
 
-        return TMs;
+        return TMSamplesArray;
     }
 
-    public String setRouting() {
-        log.info("setRouting()");
+    public String setRouting(RoutingConfiguration r) {
+        if (routingConfigurations.containsKey(r.r_ID)) {
+            String msg = String.format("setRouting() failed: routing #%d has been already configured!", r.r_ID);
+            log.info(msg);
+            return msg;
+        } else {
+            routingConfigurations.put(r.r_ID, r);
+            log.info("{}", r.toString());
+            return "OK";
+        }
+    }
+
+    public String applyRouting(int routingID) {
+        //TODO in case !routingConfigurations.containsKey(routingID) we should return an error
         //TODO in case len(path)==1 we need to return a links=null so that we just use PointToPointIntent
-        return "setRouting!!!";
+        return "";
     }
 
     public ArrayNode getAnnouncedPrefixesFromCP() {
