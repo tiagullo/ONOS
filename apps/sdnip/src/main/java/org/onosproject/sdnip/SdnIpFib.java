@@ -90,21 +90,26 @@ public class SdnIpFib implements SdnIpFibService {
     @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
     protected StatisticStore statisticStore;
 
+    //TODO remove
     @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
     protected TopologyStore store;
 
     @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
     protected LinkService linkService;
 
-    private final InternalRouteListener routeListener = new InternalRouteListener();
-    private final InternalInterfaceListener interfaceListener = new InternalInterfaceListener();
-    private final InternalFlowRuleListener flowStatsListener = new InternalFlowRuleListener();
+    private final InternalRouteListener routeListener
+            = new InternalRouteListener();
+    private final InternalInterfaceListener interfaceListener
+            = new InternalInterfaceListener();
+    private final InternalFlowRuleListener flowStatsListener
+            = new InternalFlowRuleListener();
 
     private static final int PRIORITY_OFFSET = 100;
     private static final int PRIORITY_MULTIPLIER = 5;
     protected static final ImmutableList<Constraint> CONSTRAINTS
             = ImmutableList.of(new PartialFailureConstraint());
 
+    //TODO delete?
     public final static String Dev1 = "of:00000000000000a1";
     public final static String Dev2 = "of:00000000000000a2";
     public final static String Dev3 = "of:00000000000000a3";
@@ -112,13 +117,13 @@ public class SdnIpFib implements SdnIpFibService {
     public final static String Dev5 = "of:00000000000000a5";
     public final static String Dev6 = "of:00000000000000a6";
 
-
     private final Map<IpPrefix, MultiPointToSinglePointIntent> routeIntents
             = new ConcurrentHashMap<>();
 
     private final Map<Key, Intent> routeIntentsSingle
             = new ConcurrentHashMap<>();
 
+    //TODO Map<ConnectPoint<Set<IpPrefix>> to avoid duplicates by construction
     private final Map<ConnectPoint,List<IpPrefix>> announcedPrefixesFromCP
             = new ConcurrentHashMap<>();
 
@@ -135,6 +140,7 @@ public class SdnIpFib implements SdnIpFibService {
             = new ConcurrentHashMap<>();
 
     //Auxiliary Map to store pairs of non-local prefixes
+    //TODO Map<IpPrefix<Set<IpPrefix>> to avoid duplicates by construction
     private final Map<IpPrefix,List<IpPrefix>> prefixPairs
             = new ConcurrentHashMap<>();
 
@@ -157,6 +163,7 @@ public class SdnIpFib implements SdnIpFibService {
     public void deactivate() {
         interfaceService.removeListener(interfaceListener);
         routeService.removeListener(routeListener);
+        flowRuleService.removeListener(flowStatsListener);
     }
 
     private void update(ResolvedRoute route) {
@@ -773,7 +780,7 @@ public class SdnIpFib implements SdnIpFibService {
                             if (prefixPairs.containsKey(IpPrefixSrc) && prefixPairs.containsKey(IpPrefixDst)) {
                                 //NB FlowEntry's life is ignored since we are more interested in the timestamp to be able to align measurements!
                                 TMSamples.add(new TMSample(System.currentTimeMillis()/1000, demand.toString(), ((FlowEntry) rule).bytes()));
-                                log.info("Update {}: {} @{}", demand.toString(), (((FlowEntry) rule).bytes()), System.currentTimeMillis()/1000);
+                                //log.info("Update {}: {} @{}", demand.toString(), (((FlowEntry) rule).bytes()), System.currentTimeMillis()/1000);
                             }
                         }
                     }
@@ -820,9 +827,11 @@ public class SdnIpFib implements SdnIpFibService {
             StringBuffer tmp = new StringBuffer();
             tmp.append(String.format("\nTM[%s]\n", demand));
             tmp.append("bytes\tlife\n");
-            TM.get(demand).forEach(TMsample -> {
-                tmp.append(String.format("%d\t%d\n", TMsample[0], TMsample[1]));
-            });
+            if (TM.containsKey(demand)) {
+                TM.get(demand).forEach(TMsample -> {
+                    tmp.append(String.format("%d\t%d\n", TMsample[0], TMsample[1]));
+                });
+            }
             log.info(tmp.toString());
     }
 
@@ -831,6 +840,7 @@ public class SdnIpFib implements SdnIpFibService {
 
         ArrayNode TMSamplesArray = mapper.createArrayNode();
 
+        //TODO probably jackson can automagically create the JSON avoiding .toJSONnode()
         ListIterator<TMSample> iter = TMSamples.listIterator();
         while (iter.hasNext()){
             TMSamplesArray.add(iter.next().toJSONnode(mapper));
