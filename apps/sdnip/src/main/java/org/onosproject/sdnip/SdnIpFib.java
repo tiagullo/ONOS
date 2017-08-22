@@ -123,8 +123,7 @@ public class SdnIpFib implements SdnIpFibService {
     private final Map<Key, Intent> routeIntentsSingle
             = new ConcurrentHashMap<>();
 
-    //TODO Map<ConnectPoint<Set<IpPrefix>> to avoid duplicates by construction
-    private final Map<ConnectPoint,List<IpPrefix>> announcedPrefixesFromCP
+    private final Map<ConnectPoint,Set<IpPrefix>> announcedPrefixesFromCP
             = new ConcurrentHashMap<>();
 
     private final Map<ConnectPoint,MacAddress> MACFromCP
@@ -140,8 +139,7 @@ public class SdnIpFib implements SdnIpFibService {
             = new ConcurrentHashMap<>();
 
     //Auxiliary Map to store pairs of non-local prefixes
-    //TODO Map<IpPrefix<Set<IpPrefix>> to avoid duplicates by construction
-    private final Map<IpPrefix,List<IpPrefix>> prefixPairs
+    private final Map<IpPrefix,Set<IpPrefix>> prefixPairs
             = new ConcurrentHashMap<>();
 
     private ApplicationId appId;
@@ -374,6 +372,9 @@ public class SdnIpFib implements SdnIpFibService {
                     .constraints(CONSTRAINTS)
                     .build();
         } else {
+            //We don't use a PointToPointIntent with a WaypointConstraint
+            //to avoid filtering the result of pathService.getPaths() when our
+            //Path is already available as List<Links>!
             return LinkCollectionIntent.builder()
                     .appId(appId)
                     .key(key)
@@ -409,13 +410,12 @@ public class SdnIpFib implements SdnIpFibService {
         //Update the list of announcements received from the CP
         ConnectPoint announceCP = announceInterface.connectPoint();
         if (announcedPrefixesFromCP.containsKey(announceCP)) {
-            //TODO with a set we can avoid .contains()
-            if (!announcedPrefixesFromCP.get(announceCP).contains(announcedPrefix)) {
-                announcedPrefixesFromCP.get(announceCP).add(announcedPrefix);
-            }
+            announcedPrefixesFromCP.get(announceCP).add(announcedPrefix);
         }
-        else
-            announcedPrefixesFromCP.put(announceCP, new ArrayList<IpPrefix>(Arrays.asList(announcedPrefix)));
+        else {
+            //HashSet has no duplicates, is un-ordered and O(1) add()/remove()
+            announcedPrefixesFromCP.put(announceCP, new HashSet<IpPrefix>(Arrays.asList(announcedPrefix)));
+        }
 
         //Update the MAC of the BGP speaker we received the announcement from
         MACFromCP.put(announceCP, nextHopMacAddress);
@@ -475,23 +475,17 @@ public class SdnIpFib implements SdnIpFibService {
 
                         //Add 'otherAnnouncedPrefix' to the list of pairs starting from 'announcedPrefix'
                         if (prefixPairs.containsKey(announcedPrefix)) {
-                            //TODO with a set we can avoid .contains()
-                            if (!prefixPairs.get(announcedPrefix).contains(otherAnnouncedPrefix)) {
-                                prefixPairs.get(announcedPrefix).add(otherAnnouncedPrefix);
-                            }
+                            prefixPairs.get(announcedPrefix).add(otherAnnouncedPrefix);
                         }
                         else
-                            prefixPairs.put(announcedPrefix, new ArrayList<IpPrefix>(Arrays.asList(otherAnnouncedPrefix)));
+                            prefixPairs.put(announcedPrefix, new HashSet<IpPrefix>(Arrays.asList(otherAnnouncedPrefix)));
 
                         //Add 'announcedPrefix' to the list of pairs starting from 'otherAnnouncedPrefix'
                         if (prefixPairs.containsKey(otherAnnouncedPrefix)) {
-                            //TODO with a set we can avoid .contains()
-                            if (!prefixPairs.get(otherAnnouncedPrefix).contains(announcedPrefix)) {
-                                prefixPairs.get(otherAnnouncedPrefix).add(announcedPrefix);
-                            }
+                            prefixPairs.get(otherAnnouncedPrefix).add(announcedPrefix);
                         }
                         else
-                            prefixPairs.put(otherAnnouncedPrefix, new ArrayList<IpPrefix>(Arrays.asList(announcedPrefix)));
+                            prefixPairs.put(otherAnnouncedPrefix, new HashSet<IpPrefix>(Arrays.asList(announcedPrefix)));
                     });
                 }
             }
@@ -507,18 +501,18 @@ public class SdnIpFib implements SdnIpFibService {
             DeviceId devEgress = deviceList.get(i);
             DeviceId devIngress = deviceList.get(i+1);
             // The common Link between DevEgress and DevIngress is the intersection of their links
-            Set<Link> common_links = new HashSet<Link>(linkService.getDeviceEgressLinks(devEgress));
-            common_links.retainAll(linkService.getDeviceIngressLinks(devIngress));
-            if (common_links.size() == 0) {
+            Set<Link> commonLinks = new HashSet<Link>(linkService.getDeviceEgressLinks(devEgress));
+            commonLinks.retainAll(linkService.getDeviceIngressLinks(devIngress));
+            if (commonLinks.size() == 0) {
                 log.error("No link found between node %s and node %s!",
                          devEgress.toString(), devIngress.toString());
             }
-            else if (common_links.size() == 1) {
-                path.add(common_links.iterator().next());
+            else if (commonLinks.size() == 1) {
+                path.add(commonLinks.iterator().next());
             } else {
                 log.warn("%d links found between node %s and node %s: taking the first one!",
-                        common_links.size(), devEgress.toString(), devIngress.toString());
-                path.add(common_links.iterator().next());
+                        commonLinks.size(), devEgress.toString(), devIngress.toString());
+                path.add(commonLinks.iterator().next());
             }
         }
         return path;
