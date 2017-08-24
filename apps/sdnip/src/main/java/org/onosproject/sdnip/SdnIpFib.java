@@ -49,6 +49,7 @@ import org.onosproject.net.flow.FlowRuleService;
 import org.onosproject.net.flow.TrafficSelector;
 import org.onosproject.net.flow.TrafficTreatment;
 import org.onosproject.net.flow.criteria.Criterion;
+import org.onosproject.net.flow.criteria.IPCriterion;
 import org.onosproject.net.intent.*;
 import org.onosproject.net.intent.constraint.PartialFailureConstraint;
 import org.onosproject.net.link.LinkService;
@@ -108,14 +109,6 @@ public class SdnIpFib implements SdnIpFibService {
     private static final int PRIORITY_MULTIPLIER = 5;
     protected static final ImmutableList<Constraint> CONSTRAINTS
             = ImmutableList.of(new PartialFailureConstraint());
-
-    //TODO delete?
-    public final static String Dev1 = "of:00000000000000a1";
-    public final static String Dev2 = "of:00000000000000a2";
-    public final static String Dev3 = "of:00000000000000a3";
-    public final static String Dev4 = "of:00000000000000a4";
-    public final static String Dev5 = "of:00000000000000a5";
-    public final static String Dev6 = "of:00000000000000a6";
 
     private final Map<IpPrefix, MultiPointToSinglePointIntent> routeIntents
             = new ConcurrentHashMap<>();
@@ -327,25 +320,61 @@ public class SdnIpFib implements SdnIpFibService {
                 .build();
     }
 
+    //Returns a proper Intent among PointToPointIntent and LinkCollectionIntent
+    private Intent generateConnectivityIntent(ApplicationId appId, Key key,
+                                     TrafficSelector selector,
+                                     FilteredConnectPoint ingressFilteredCP,
+                                     FilteredConnectPoint egressFilteredCP,
+                                     TrafficTreatment treatment, int priority,
+                                     List<Constraint> constraints,
+                                     List<Link> links) {
+        if (links == null) {
+            return PointToPointIntent.builder()
+                    .appId(appId)
+                    .key(key)
+                    .selector(selector)
+                    .filteredIngressPoint(ingressFilteredCP)
+                    .filteredEgressPoint(egressFilteredCP)
+                    .treatment(treatment)
+                    .priority(priority)
+                    .constraints(constraints)
+                    .build();
+        } else {
+            //We don't use a PointToPointIntent with a WaypointConstraint
+            //to avoid filtering the result of pathService.getPaths() when our
+            //Path is already computed and available as a List<Link>!
+            return LinkCollectionIntent.builder()
+                    .appId(appId)
+                    .key(key)
+                    .selector(selector)
+                    .filteredIngressPoints(ImmutableSet.of(ingressFilteredCP))
+                    .filteredEgressPoints(ImmutableSet.of(egressFilteredCP))
+                    .treatment(treatment)
+                    .priority(priority)
+                    .constraints(constraints)
+                    .links(ImmutableSet.copyOf(links))
+                    .applyTreatmentOnEgress(true)
+                    .build();
+        }
+    }
+
     //TODO add doc
     private Intent generateSrcDstIntent(Interface ingressInterface, IpPrefix ingressPrefix, ConnectPoint ingressCP,
-                                              Interface egressInterface, IpPrefix egressPrefix, ConnectPoint egressCP,
-                                              MacAddress egressMAC, List<Link> links) {
-
-        //Ingress
+                                        Interface egressInterface, IpPrefix egressPrefix, ConnectPoint egressCP,
+                                        MacAddress egressMAC, List<Link> links) {
+        //Filtered ingress ConnectPoint
         TrafficSelector.Builder selectorIn =
                 buildIngressTrafficSelector(ingressInterface, ingressPrefix);
         FilteredConnectPoint ingressFilteredCP =
                 new FilteredConnectPoint(ingressCP, selectorIn.build());
 
-
-        //Egress
+        //Filtered egress ConnectPoint
         TrafficSelector.Builder selectorOut =
                 buildEgressTrafficSelector(egressInterface, egressPrefix);
         FilteredConnectPoint egressFilteredCP =
                 new FilteredConnectPoint(egressCP, selectorOut.build());
 
-
+        //Match on IpSrc+IpDst
         TrafficSelector.Builder selector = DefaultTrafficSelector.builder();
         selector.matchIPSrc(ingressPrefix).matchIPDst(egressPrefix);
 
@@ -353,42 +382,22 @@ public class SdnIpFib implements SdnIpFibService {
         TrafficTreatment.Builder treatment = DefaultTrafficTreatment.builder()
                 .setEthDst(egressMAC);
 
-        // Set priority
+        // Priority
         int priority =
                 egressPrefix.prefixLength() * PRIORITY_MULTIPLIER + PRIORITY_OFFSET;
 
-        // Set key
+        // Intent key
         Key key = Key.of(ingressPrefix.toString().concat("-").concat(egressPrefix.toString()), appId);
 
-        if (links == null) {
-            return PointToPointIntent.builder()
-                    .appId(appId)
-                    .key(key)
-                    .selector(selector.build())
-                    .filteredIngressPoint(ingressFilteredCP)
-                    .filteredEgressPoint(egressFilteredCP)
-                    .treatment(treatment.build())
-                    .priority(priority)
-                    .constraints(CONSTRAINTS)
-                    .build();
-        } else {
-            //We don't use a PointToPointIntent with a WaypointConstraint
-            //to avoid filtering the result of pathService.getPaths() when our
-            //Path is already available as List<Links>!
-            return LinkCollectionIntent.builder()
-                    .appId(appId)
-                    .key(key)
-                    .selector(selector.build())
-                    .filteredIngressPoints(ImmutableSet.of(ingressFilteredCP))
-                    .filteredEgressPoints(ImmutableSet.of(egressFilteredCP))
-                    .treatment(treatment.build())
-                    .priority(priority)
-                    .constraints(CONSTRAINTS)
-                    .links(ImmutableSet.copyOf(links))
-                    .applyTreatmentOnEgress(true)
-                    .cost(1)
-                    .build();
-        }
+        return generateConnectivityIntent(appId,
+                                 key,
+                                 selector.build(),
+                                 ingressFilteredCP,
+                                 egressFilteredCP,
+                                 treatment.build(),
+                                 priority,
+                                 CONSTRAINTS,
+                                 links);
     }
 
 
@@ -420,7 +429,7 @@ public class SdnIpFib implements SdnIpFibService {
         //Update the MAC of the BGP speaker we received the announcement from
         MACFromCP.put(announceCP, nextHopMacAddress);
 
-        List<Intent> intentsArrayList = new ArrayList<Intent>();
+        List<Intent> intentsList = new ArrayList<Intent>();
 
         /*
         We received a new announcement for 'announcedPrefix' from 'announceInterface'.
@@ -434,38 +443,17 @@ public class SdnIpFib implements SdnIpFibService {
 
                 if (announcedPrefixesFromCP.containsKey(ingressInterface.connectPoint())) {
                     announcedPrefixesFromCP.get(ingressInterface.connectPoint()).forEach(otherAnnouncedPrefix -> {
-                        List<Link> linksAB = null;
-                        List<Link> linksBA = null;
-
-                        //TODO remove this hardcoded test from Dev1 to Dev6 (192.168.10.0/24-192.168.3.0/24)
-                        if (ingressInterface.connectPoint().deviceId().equals(DeviceId.deviceId(Dev1)) && announceCP.deviceId().equals(DeviceId.deviceId(Dev5))) {
-
-                            //Get the first shortes path using ONOS
-                            //links = store.getPaths(store.currentTopology(), DeviceId.deviceId(Dev1), DeviceId.deviceId(Dev6)).iterator().next().links();
-
-                            List<DeviceId> deviceList = new ArrayList<DeviceId>();
-                            deviceList.add(DeviceId.deviceId(Dev1));
-                            deviceList.add(DeviceId.deviceId(Dev2));
-                            deviceList.add(DeviceId.deviceId(Dev4));
-                            deviceList.add(DeviceId.deviceId(Dev3));
-                            deviceList.add(DeviceId.deviceId(Dev5));
-                            linksAB = createPathFromDeviceList(deviceList);
-
-                            Collections.reverse(deviceList);
-                            linksBA = createPathFromDeviceList(deviceList);
-                        }
-
                         //A is the device I'm currently iterating over as source device
                         //B is the device I received the announce from (destination device)
                         Intent singleIntentAB = generateSrcDstIntent(ingressInterface, otherAnnouncedPrefix, ingressInterface.connectPoint(),
-                                                               announceInterface, announcedPrefix, announceCP, nextHopMacAddress, linksAB);
+                                                               announceInterface, announcedPrefix, announceCP, nextHopMacAddress, null);
 
-                        intentsArrayList.add(singleIntentAB);
+                        intentsList.add(singleIntentAB);
 
                         Intent singleIntentBA = generateSrcDstIntent(announceInterface, announcedPrefix, announceCP,
-                                                               ingressInterface, otherAnnouncedPrefix, ingressInterface.connectPoint(), MACFromCP.get(ingressInterface.connectPoint()), linksBA);
+                                                               ingressInterface, otherAnnouncedPrefix, ingressInterface.connectPoint(), MACFromCP.get(ingressInterface.connectPoint()), null);
 
-                        intentsArrayList.add(singleIntentBA);
+                        intentsList.add(singleIntentBA);
 
                         //Initialize the TM for demands otherAnnouncedPrefix -> announcedPrefix ...
                         TM.put(new Pair(otherAnnouncedPrefix, announcedPrefix), new ArrayList<Long[]>());
@@ -473,14 +461,14 @@ public class SdnIpFib implements SdnIpFibService {
                         TM.put(new Pair(announcedPrefix, otherAnnouncedPrefix), new ArrayList<Long[]>());
 
 
-                        //Add 'otherAnnouncedPrefix' to the list of pairs starting from 'announcedPrefix'
+                        //Add 'otherAnnouncedPrefix' to the list of pairs starting from 'announcedPrefix', i.e. (announcedPrefix, *)
                         if (prefixPairs.containsKey(announcedPrefix)) {
                             prefixPairs.get(announcedPrefix).add(otherAnnouncedPrefix);
                         }
                         else
                             prefixPairs.put(announcedPrefix, new HashSet<IpPrefix>(Arrays.asList(otherAnnouncedPrefix)));
 
-                        //Add 'announcedPrefix' to the list of pairs starting from 'otherAnnouncedPrefix'
+                        //Add 'announcedPrefix' to the list of pairs starting from 'otherAnnouncedPrefix', i.e. (otherAnnouncedPrefix, *)
                         if (prefixPairs.containsKey(otherAnnouncedPrefix)) {
                             prefixPairs.get(otherAnnouncedPrefix).add(announcedPrefix);
                         }
@@ -491,7 +479,7 @@ public class SdnIpFib implements SdnIpFibService {
             }
         });
 
-        return intentsArrayList;
+        return intentsList;
     }
 
     private List<Link> createPathFromDeviceList(List<DeviceId> deviceList) {
@@ -748,8 +736,10 @@ public class SdnIpFib implements SdnIpFibService {
                         Criterion IPDstMatch = rule.selector().getCriterion(Criterion.Type.IPV4_DST);
                         // check if 'rule' matches IPv4 SRC and IPv4 DST
                         if (IPSrcMatch != null && IPDstMatch != null) {
-                            IpPrefix IpPrefixSrc = IPMatchToIpPrefix(IPSrcMatch);
-                            IpPrefix IpPrefixDst = IPMatchToIpPrefix(IPDstMatch);
+                            //TODO variable names must be lower case!!! (everywhere!!!)
+                            //TODO avoid underscore in variable names
+                            IpPrefix IpPrefixSrc = ((IPCriterion) IPSrcMatch).ip();
+                            IpPrefix IpPrefixDst = ((IPCriterion) IPDstMatch).ip();
 
                             Pair<IpPrefix, IpPrefix> demand = new Pair(IpPrefixSrc, IpPrefixDst);
 
@@ -784,36 +774,6 @@ public class SdnIpFib implements SdnIpFibService {
                     log.warn("Unknown flow rule event {}", event);
             }
         }
-    }
-
-    private String removePrefixString(Criterion IPMatch) {
-        // removePrefixString(IPV4_SRC:10.0.4.101/32) returns "10.0.4.101/32"
-        return IPMatch.toString().substring(9);
-    }
-
-    private IpPrefix IPMatchToIpPrefix(Criterion IPMatch) {
-        return IpPrefix.valueOf(removePrefixString(IPMatch));
-    }
-
-    //TODO is this needed?
-    //Extract PrefixLenght
-    private int ExtractPrefix(Criterion Rule)
-    {
-        String temp = removePrefixString(Rule);
-        int index = temp.indexOf("/");
-        int prefixLenght = Integer.parseInt(temp.substring(index+1));
-        return prefixLenght;
-
-    }
-
-    //TODO is this needed?
-    //Extract IpAddress without PrefixLength
-    private String extractAddress(Criterion rule)
-    {
-        String temp = removePrefixString(rule);
-        int index = temp.indexOf("/");
-        String address = temp.substring(0,(index));
-        return address;
     }
 
     private void printTM(Pair<IpPrefix, IpPrefix> demand, IpPrefix IpPrefixSrc, IpPrefix IpPrefixDst){
@@ -867,82 +827,52 @@ public class SdnIpFib implements SdnIpFibService {
                     , appId);
                 Intent modifiedIntent = null;
                 if (routeIntentsSingle.containsKey(intentKey)) {
+                    /* We cannot modify the attributes (e.g. links) of an Intent
+                    because all of them are defined as final, so we are forced
+                    to create a brand new Intent, modifiedIntent, copying the
+                    attributes value and eventually forcing a Path. Eventually
+                    because if path is the extreme 1-hop case we rely on
+                    generateConnectivityIntent() to produce a PointToPointIntent
+                    rather than LinkCollectionIntent. */
                     Intent intent = routeIntentsSingle.get(intentKey);
-                    // TODO up to now we just support unsplittable routing
-                    List<DeviceId> path = route.paths.get(0).path;
+                    if (intent instanceof LinkCollectionIntent ||
+                            intent instanceof PointToPointIntent) {
+                        //TODO up to now we just support unsplittable routing
+                        List<DeviceId> path = route.paths.get(0).path;
 
-                    /* There are different cases according to the instance type
-                    of the current Intent and the length of the new path.
-                    LCIntent & len(path)=1 => make a PPIntent
-                    LCIntent & len(path)>1 => keep a LCIntent
-                    PPIntent & len(path)=1 => keep a PPIntent
-                    PPIntent & len(path)>1 => make a LCIntent */
-                    if (intent instanceof LinkCollectionIntent) {
-                        if (path.size()==1) {
-                            /* The current Intent is a LinkCollectionIntent but
-                             the new path is a 1-hop path. The new Intent will
-                             be a PointToPointIntent (we are pretty sure the
-                             PointToPointIntentCompiler won't produce a path
-                             longer than the, 1-hop, shortest path) */
-                            modifiedIntent = PointToPointIntent.builder()
-                                    .appId(appId)
-                                    .key(intentKey)
-                                    .selector(((LinkCollectionIntent) intent).selector())
-                                    .filteredIngressPoint(((LinkCollectionIntent) intent).filteredIngressPoints().iterator().next())
-                                    .filteredEgressPoint(((LinkCollectionIntent) intent).filteredEgressPoints().iterator().next())
-                                    .treatment(((LinkCollectionIntent) intent).treatment())
-                                    .priority(intent.priority())
-                                    .constraints(((LinkCollectionIntent) intent).constraints())
-                                    .build();
+                        FilteredConnectPoint ingressCP;
+                        FilteredConnectPoint egressCP;
+                        List<Link> links;
+
+                        if (intent instanceof LinkCollectionIntent) {
+                            ingressCP = ((LinkCollectionIntent) intent).filteredIngressPoints().iterator().next();
+                            egressCP = ((LinkCollectionIntent) intent).filteredEgressPoints().iterator().next();
                         } else {
-                            /* The current Intent is already a
-                             LinkCollectionIntent but all its members are final,
-                             so we need to create a new LinkCollectionIntent by
-                             copying all its attributes except for the new
-                             link set */
-                            modifiedIntent = LinkCollectionIntent.builder()
-                                    .appId(appId)
-                                    .key(intentKey)
-                                    .selector(((LinkCollectionIntent) intent).selector())
-                                    .filteredIngressPoints(((LinkCollectionIntent) intent).filteredIngressPoints())
-                                    .filteredEgressPoints(((LinkCollectionIntent) intent).filteredEgressPoints())
-                                    .treatment(((LinkCollectionIntent) intent).treatment())
-                                    .priority(intent.priority())
-                                    .constraints(((LinkCollectionIntent) intent).constraints())
-                                    .links(ImmutableSet.copyOf(createPathFromDeviceList(path)))
-                                    .applyTreatmentOnEgress(true)
-                                    .build();
+                            ingressCP = ((PointToPointIntent) intent).filteredIngressPoint();
+                            egressCP = ((PointToPointIntent) intent).filteredEgressPoint();
                         }
-                    } else if (intent instanceof PointToPointIntent) {
-                        if (path.size()==1) {
-                            /* The current Intent is already a
-                            PointToPointIntent and we can keep it as is because
-                            if the external model computed a 1-hop path, we
-                            are pretty sure PointToPointIntentCompiler will keep
-                            the same, 1-hop, shortest path */
+
+                        //handle the 1-hop case
+                        if (path.size() == 1) {
+                            links = null;
                         } else {
-                            /* The current Intent is a PointToPointIntent but
-                             the new path is longer than 1-hop path. To enforce
-                             the path computed by the external model, the new
-                             Intent will be a LinkCollectionIntent with all the
-                             attributes of the current intent plus the new link
-                             set */
-                            modifiedIntent = LinkCollectionIntent.builder()
-                                    .appId(appId)
-                                    .key(intentKey)
-                                    .selector(((PointToPointIntent) intent).selector())
-                                    .filteredIngressPoints(ImmutableSet.of(((PointToPointIntent) intent).filteredIngressPoint()))
-                                    .filteredEgressPoints(ImmutableSet.of(((PointToPointIntent) intent).filteredEgressPoint()))
-                                    .treatment(((PointToPointIntent) intent).treatment())
-                                    .priority(intent.priority())
-                                    .constraints(((PointToPointIntent) intent).constraints())
-                                    .links(ImmutableSet.copyOf(createPathFromDeviceList(path)))
-                                    .applyTreatmentOnEgress(true)
-                                    .build();
+                            links = createPathFromDeviceList(path);
                         }
+
+                        modifiedIntent = generateConnectivityIntent(
+                                intent.appId(),
+                                intent.key(),
+                                ((ConnectivityIntent) intent).selector(),
+                                ingressCP,
+                                egressCP,
+                                ((ConnectivityIntent) intent).treatment(),
+                                intent.priority(),
+                                ((ConnectivityIntent) intent).constraints(),
+                                links);
                     } else {
                         //TODO should we create a brand new LinkCollectionIntent?
-                        //All the attributes might be just copied...
+                        //All the attributes might be just copied...provided
+                        //that intent is a ConnectivityIntent
                         resultString.append(String.format("unable to handle a %s intent for demand %s. ", intent.getClass().toString(), intentKey.toString()));
                     }
                 } else {
