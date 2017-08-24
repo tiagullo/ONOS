@@ -54,7 +54,6 @@ import org.onosproject.net.intent.*;
 import org.onosproject.net.intent.constraint.PartialFailureConstraint;
 import org.onosproject.net.link.LinkService;
 import org.onosproject.net.statistic.StatisticStore;
-import org.onosproject.net.topology.TopologyStore;
 import org.onosproject.routing.IntentSynchronizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,10 +89,6 @@ public class SdnIpFib implements SdnIpFibService {
 
     @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
     protected StatisticStore statisticStore;
-
-    //TODO remove
-    @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
-    protected TopologyStore store;
 
     @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
     protected LinkService linkService;
