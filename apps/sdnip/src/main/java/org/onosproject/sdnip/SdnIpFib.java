@@ -858,9 +858,122 @@ public class SdnIpFib implements SdnIpFibService {
     }
 
     public String applyRouting(int routingID) {
-        //TODO in case !routingConfigurations.containsKey(routingID) we should return an error
-        //TODO in case len(path)==1 we need to return a links=null so that we just use PointToPointIntent
-        return "";
+        StringBuilder resultString = new StringBuilder();
+        if (routingConfigurations.containsKey(routingID)) {
+            RoutingConfiguration r = routingConfigurations.get(routingID);
+            for (Route route: r.r_config) {
+                Key intentKey = Key.of(
+                    route.demand.get(0).concat("-").concat(route.demand.get(1))
+                    , appId);
+                Intent modifiedIntent = null;
+                if (routeIntentsSingle.containsKey(intentKey)) {
+                    Intent intent = routeIntentsSingle.get(intentKey);
+                    // TODO up to now we just support unsplittable routing
+                    List<DeviceId> path = route.paths.get(0).path;
+
+                    /* There are different cases according to the instance type
+                    of the current Intent and the length of the new path.
+                    LCIntent & len(path)=1 => make a PPIntent
+                    LCIntent & len(path)>1 => keep a LCIntent
+                    PPIntent & len(path)=1 => keep a PPIntent
+                    PPIntent & len(path)>1 => make a LCIntent */
+                    if (intent instanceof LinkCollectionIntent) {
+                        if (path.size()==1) {
+                            /* The current Intent is a LinkCollectionIntent but
+                             the new path is a 1-hop path. The new Intent will
+                             be a PointToPointIntent (we are pretty sure the
+                             PointToPointIntentCompiler won't produce a path
+                             longer than the, 1-hop, shortest path) */
+                            modifiedIntent = PointToPointIntent.builder()
+                                    .appId(appId)
+                                    .key(intentKey)
+                                    .selector(((LinkCollectionIntent) intent).selector())
+                                    .filteredIngressPoint(((LinkCollectionIntent) intent).filteredIngressPoints().iterator().next())
+                                    .filteredEgressPoint(((LinkCollectionIntent) intent).filteredEgressPoints().iterator().next())
+                                    .treatment(((LinkCollectionIntent) intent).treatment())
+                                    .priority(intent.priority())
+                                    .constraints(((LinkCollectionIntent) intent).constraints())
+                                    .build();
+                        } else {
+                            /* The current Intent is already a
+                             LinkCollectionIntent but all its members are final,
+                             so we need to create a new LinkCollectionIntent by
+                             copying all its attributes except for the new
+                             link set */
+                            modifiedIntent = LinkCollectionIntent.builder()
+                                    .appId(appId)
+                                    .key(intentKey)
+                                    .selector(((LinkCollectionIntent) intent).selector())
+                                    .filteredIngressPoints(((LinkCollectionIntent) intent).filteredIngressPoints())
+                                    .filteredEgressPoints(((LinkCollectionIntent) intent).filteredEgressPoints())
+                                    .treatment(((LinkCollectionIntent) intent).treatment())
+                                    .priority(intent.priority())
+                                    .constraints(((LinkCollectionIntent) intent).constraints())
+                                    .links(ImmutableSet.copyOf(createPathFromDeviceList(path)))
+                                    .applyTreatmentOnEgress(true)
+                                    .build();
+                        }
+                    } else if (intent instanceof PointToPointIntent) {
+                        if (path.size()==1) {
+                            /* The current Intent is already a
+                            PointToPointIntent and we can keep it as is because
+                            if the external model computed a 1-hop path, we
+                            are pretty sure PointToPointIntentCompiler will keep
+                            the same, 1-hop, shortest path */
+                        } else {
+                            /* The current Intent is a PointToPointIntent but
+                             the new path is longer than 1-hop path. To enforce
+                             the path computed by the external model, the new
+                             Intent will be a LinkCollectionIntent with all the
+                             attributes of the current intent plus the new link
+                             set */
+                            modifiedIntent = LinkCollectionIntent.builder()
+                                    .appId(appId)
+                                    .key(intentKey)
+                                    .selector(((PointToPointIntent) intent).selector())
+                                    .filteredIngressPoints(ImmutableSet.of(((PointToPointIntent) intent).filteredIngressPoint()))
+                                    .filteredEgressPoints(ImmutableSet.of(((PointToPointIntent) intent).filteredEgressPoint()))
+                                    .treatment(((PointToPointIntent) intent).treatment())
+                                    .priority(intent.priority())
+                                    .constraints(((PointToPointIntent) intent).constraints())
+                                    .links(ImmutableSet.copyOf(createPathFromDeviceList(path)))
+                                    .applyTreatmentOnEgress(true)
+                                    .build();
+                        }
+                    } else {
+                        //TODO should we create a brand new LinkCollectionIntent?
+                        //All the attributes might be just copied...
+                        resultString.append(String.format("unable to handle a %s intent for demand %s. ", intent.getClass().toString(), intentKey.toString()));
+                    }
+                } else {
+                    /* TODO intentKey not found. Should we create a brand new LinkCollectionIntent?
+                    It's like adding a brand new flow so we need to get
+                    -ingressInterface/egressInterface from announcedPrefixesFromCP [*]
+                    -egressMAC from MACFromCP
+                    and call generateSrcDstIntent()
+
+                    [*] provided that we know it! But if we know it, a PP/LCIntent
+                    would already exists! */
+                    resultString.append(String.format("no intent found for demand %s. ", intentKey.toString()));
+                }
+
+                if (modifiedIntent != null) {
+                    routeIntentsSingle.put(intentKey, modifiedIntent);
+                    intentSynchronizer.submit(modifiedIntent);
+                }
+            }
+        } else {
+            resultString.append(String.format("unknown routing #%d!", routingID));
+        }
+
+        if (resultString.length()==0) {
+            resultString.append("OK");
+        } else {
+            resultString.insert(0, String.format("applyRouting(%d) failed: ", routingID));
+        }
+
+        log.info(resultString.toString());
+        return resultString.toString();
     }
 
     public ArrayNode getAnnouncedPrefixesFromCP() {

@@ -93,7 +93,7 @@ public class AppWebResource extends AbstractWebResource {
     }
 
     /*
-    Receives a list of routing configurations. Each configuration specifies, for
+    Configure a list of routing configurations. Each configuration specifies, for
     each demand, the list of weighted paths. The body of HTTP POST is a JSON
     {
         "routing_list": [
@@ -147,6 +147,33 @@ public class AppWebResource extends AbstractWebResource {
                 result.put("response", resultString.toString());
             else
                 result.put("response", "OK");
+            return ok(result).build();
+        } catch (Exception e) {
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR).
+                    entity(e.toString())
+                    .build();
+        }
+    }
+
+    /*
+    Request the activation of a routing configurations.
+    The body of HTTP POST is a JSON
+    {
+        "r_ID": 0
+    }
+    */
+    @POST
+    @Path("apply_routing")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response applyRouting(InputStream stream) {
+        sdnIpFibService = get(SdnIpFibService.class);
+        ObjectNode result = mapper().createObjectNode();
+        try {
+            ObjectNode jsonTree = (ObjectNode) mapper().readTree(stream);
+            String outcome = sdnIpFibService
+                    .applyRouting(jsonTree.get("r_ID").asInt());
+            result.put("response", outcome);
             return ok(result).build();
         } catch (Exception e) {
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR).
