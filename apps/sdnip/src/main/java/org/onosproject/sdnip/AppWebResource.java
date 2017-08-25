@@ -16,8 +16,6 @@
 package org.onosproject.sdnip;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import org.onosproject.rest.AbstractWebResource;
 
@@ -119,24 +117,19 @@ public class AppWebResource extends AbstractWebResource {
     }
     */
     @POST
-    @Path("set_routing")
+    @Path("add_routing")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public Response setRouting(InputStream stream) {
+    public Response addRouting(InputStream stream) {
         sdnIpFibService = get(SdnIpFibService.class);
         ObjectNode result = mapper().createObjectNode();
         StringBuilder resultString = new StringBuilder();
 
         mapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         try {
-            ObjectNode jsonTree = (ObjectNode) mapper().readTree(stream);
-            ArrayNode routingConfigurationList = (ArrayNode) jsonTree.get("routing_list");
-            //cannot use forEach because readValue might throw IOException
-            for (JsonNode routingConfiguration : routingConfigurationList) {
-                RoutingConfiguration r = mapper()
-                        .readValue(routingConfiguration.toString(),
-                                   RoutingConfiguration.class);
-                String outcome = sdnIpFibService.setRouting(r);
+            AddRoutingMsg msg = mapper().readValue(stream, AddRoutingMsg.class);
+            for (RoutingConfiguration routingConfiguration: msg.routing_list) {
+                String outcome = sdnIpFibService.addRouting(routingConfiguration);
                 if (!outcome.equals("OK")) {
                     if (resultString.length() > 0)
                         resultString.append(" ");
@@ -170,9 +163,8 @@ public class AppWebResource extends AbstractWebResource {
         sdnIpFibService = get(SdnIpFibService.class);
         ObjectNode result = mapper().createObjectNode();
         try {
-            ObjectNode jsonTree = (ObjectNode) mapper().readTree(stream);
-            String outcome = sdnIpFibService
-                    .applyRouting(jsonTree.get("r_ID").asInt());
+            ApplyRoutingMsg msg = mapper().readValue(stream, ApplyRoutingMsg.class);
+            String outcome = sdnIpFibService.applyRouting(msg.r_ID);
             result.put("response", outcome);
             return ok(result).build();
         } catch (Exception e) {

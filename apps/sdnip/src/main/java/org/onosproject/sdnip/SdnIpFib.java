@@ -800,9 +800,9 @@ public class SdnIpFib implements SdnIpFibService {
         return TMSamplesArray;
     }
 
-    public String setRouting(RoutingConfiguration r) {
+    public String addRouting(RoutingConfiguration r) {
         if (routingConfigurations.containsKey(r.r_ID)) {
-            String msg = String.format("setRouting() failed: routing #%d has been already configured!", r.r_ID);
+            String msg = String.format("addRouting() failed: routing #%d has been already configured!", r.r_ID);
             log.info(msg);
             return msg;
         } else {
