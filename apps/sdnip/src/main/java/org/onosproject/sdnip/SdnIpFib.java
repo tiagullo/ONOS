@@ -152,6 +152,10 @@ public class SdnIpFib implements SdnIpFibService {
         flowRuleService.removeListener(flowStatsListener);
     }
 
+    //TODO when do we need to use synchronized (this) { }?
+    // ConcurrentHashMap, for example, are by definition thread-safe, while
+    // LinkedList are not! What about ConsistentMap?
+
     private void update(ResolvedRoute route) {
         synchronized (this) {
             IpPrefix announcedPrefix = route.prefix();
@@ -839,9 +843,14 @@ public class SdnIpFib implements SdnIpFibService {
         return TMSamplesArray;
     }
 
+    public void resetRoutings() {
+        log.info("routingConfigurations cleared");
+        routingConfigurations.clear();
+    }
+
     public String addRouting(RoutingConfiguration r) {
         if (routingConfigurations.containsKey(r.r_ID)) {
-            String msg = String.format("addRouting() failed: routing #%d has been already configured!", r.r_ID);
+            String msg = String.format("routing #%d has been already configured!", r.r_ID);
             log.info(msg);
             return msg;
         } else {
@@ -931,7 +940,7 @@ public class SdnIpFib implements SdnIpFibService {
         }
 
         if (resultString.length()==0) {
-            resultString.append("OK");
+            resultString.append(String.format("applyRouting(%d) OK", routingID));
         } else {
             resultString.insert(0, String.format("applyRouting(%d) failed: ", routingID));
         }

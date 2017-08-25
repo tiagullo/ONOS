@@ -90,6 +90,16 @@ public class AppWebResource extends AbstractWebResource {
         return ok(result).build();
     }
 
+    @GET
+    @Path("reset_routings")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response resetRoutings() {
+        get(SdnIpFibService.class).resetRoutings();
+        ObjectNode result = mapper().createObjectNode()
+                .put("response", "OK");
+        return ok(result).build();
+    }
+
     /*
     Configure a list of routing configurations. Each configuration specifies, for
     each demand, the list of weighted paths. The body of HTTP POST is a JSON
@@ -137,7 +147,7 @@ public class AppWebResource extends AbstractWebResource {
                 }
             }
             if (resultString.length() > 0)
-                result.put("response", resultString.toString());
+                result.put("response", "addRouting() failed: ".concat(resultString.toString()));
             else
                 result.put("response", "OK");
             return ok(result).build();
