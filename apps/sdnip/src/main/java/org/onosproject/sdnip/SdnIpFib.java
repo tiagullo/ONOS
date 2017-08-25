@@ -105,8 +105,8 @@ public class SdnIpFib implements SdnIpFibService {
     protected static final ImmutableList<Constraint> CONSTRAINTS
             = ImmutableList.of(new PartialFailureConstraint());
 
-    private final Map<IpPrefix, MultiPointToSinglePointIntent> routeIntents
-            = new ConcurrentHashMap<>();
+    /*private final Map<IpPrefix, MultiPointToSinglePointIntent> routeIntents
+            = new ConcurrentHashMap<>();*/
 
     private final Map<Key, Intent> routeIntentsSingle
             = new ConcurrentHashMap<>();
@@ -167,7 +167,7 @@ public class SdnIpFib implements SdnIpFibService {
         }
     }
 
-    private void withdraw(ResolvedRoute route) {
+    private void withdraw(ResolvedRoute route, boolean forceWithdraw) {
         synchronized (this) {
             /*
             We can test this without touching quagga conf file simply with
@@ -177,7 +177,8 @@ public class SdnIpFib implements SdnIpFibService {
             */
             IpPrefix withdrawnPrefix = route.prefix();
             log.info("Withdrawn BGP announcement for {}", withdrawnPrefix.toString());
-            if (KEEP_FLOWS_OF_WITHDRAWN_ROUTES) {
+            //forceWithdraw allows to bypass KEEP_FLOWS_OF_WITHDRAWN_ROUTES
+            if (KEEP_FLOWS_OF_WITHDRAWN_ROUTES && !forceWithdraw) {
                 /*
                 Why should we put KEEP_FLOWS_OF_WITHDRAWN_ROUTES = True?
                 When an IpPrefix is withdrawn we should:
@@ -501,12 +502,19 @@ public class SdnIpFib implements SdnIpFibService {
         return path;
     }
 
-    //TODO check 'addInterface' in the legacy SDN-IP
     private void addInterface(Interface intf) {
+        /*
+            In the original SDN-IP application the addition of an interface
+            triggers the extension of the ingressCP set of all the
+            MultiPointToSinglePointIntents currently installed.
+            In our modified version new PointToPointIntents will be created from
+            and to the new interface as soon as a BGP announcement is received
+            from this new interface.
+        */
+
+        /*
         synchronized (this) {
-                //map.entry Returns the key corresponding to this entry. in questo caso
-                //ipprefix è la key e multipoint è il value.
-            for (Map.Entry<IpPrefix, MultiPointToSinglePointIntent> entry : routeIntents.entrySet()) {
+           for (Map.Entry<IpPrefix, MultiPointToSinglePointIntent> entry : routeIntents.entrySet()) {
                 // Retrieve the IP prefix and affected intent
                 IpPrefix prefix = entry.getKey();
                 MultiPointToSinglePointIntent intent = entry.getValue();
@@ -536,14 +544,44 @@ public class SdnIpFib implements SdnIpFibService {
                 intentSynchronizer.submit(newIntent);
             }
         }
+        */
     }
 
     /*
      * Handles the case in which an existing interface gets removed.
      */
-    //TODO check 'addInterface' in the legacy SDN-IP
+    //TODO how to test this?
     private void removeInterface(Interface intf) {
+        /*
+            In the original SDN-IP application the removal of an interface
+            triggers the reduction of the ingressCP set of all the
+            MultiPointToSinglePointIntents currently installed and the removal
+            of MultiPointToSinglePointIntents towards such interface.
+            In our modified version we need to remove all the intents related to
+            flows to/from all the IpPrefixes announced from this interface.
+
+            NB with respect to the case of a withdrawn route, here we remove
+            the Intents and the flows, regardless of the value of
+            KEEP_FLOWS_OF_WITHDRAWN_ROUTES, because the interface has gone and
+            the IntentManager would probably fail to compile the Intents.
+            That's why we call withdraw() with forceWithdraw
+        */
         synchronized (this) {
+            if (announcedPrefixesFromCP.containsKey(intf.connectPoint())) {
+                announcedPrefixesFromCP.get(intf.connectPoint())
+                        .forEach(ipPrefix -> {
+                            //we can reuse withdraw()
+                            ResolvedRoute dummyResolvedRoute = new ResolvedRoute(
+                                    ipPrefix,
+                                    intf.ipAddressesList().get(0).ipAddress(),
+                                    null,
+                                    intf.connectPoint()
+                            );
+                            withdraw(dummyResolvedRoute, true);
+                        });
+                announcedPrefixesFromCP.remove(intf.connectPoint());
+            }
+            /*
             for (Map.Entry<IpPrefix, MultiPointToSinglePointIntent> entry : routeIntents.entrySet()) {
                 // Retrieve the IP prefix and intent possibly affected
                 IpPrefix prefix = entry.getKey();
@@ -599,6 +637,7 @@ public class SdnIpFib implements SdnIpFibService {
                     }
                 }
             }
+            */
         }
     }
 
@@ -685,7 +724,7 @@ public class SdnIpFib implements SdnIpFibService {
                 update(event.subject());
                 break;
             case ROUTE_REMOVED:
-                withdraw(event.subject());
+                withdraw(event.subject(), false);
                 break;
             default:
                 break;
@@ -785,11 +824,11 @@ public class SdnIpFib implements SdnIpFibService {
     }
 
     public ArrayNode getTMs() {
-        //TODO check synchronization with multiple threads etc...
+        //TODO check synchronization with multiple threads due to remove()
 
         ArrayNode TMSamplesArray = mapper.createArrayNode();
 
-        //TODO probably jackson can automagically create the JSON avoiding .toJSONnode()
+        //TODO probably jackson can automagically create the JSON
         ListIterator<TMSample> iter = TMSamples.listIterator();
         while (iter.hasNext()){
             TMSamplesArray.add(iter.next().toJSONnode(mapper));
@@ -901,6 +940,8 @@ public class SdnIpFib implements SdnIpFibService {
         return resultString.toString();
     }
 
+    //TODO probably jackson can automagically create the JSON
+    //http://www.davismol.net/2015/05/18/jackson-create-and-register-a-custom-json-serializer-with-stdserializer-and-simplemodule-classes/
     public ArrayNode getAnnouncedPrefixesFromCP() {
         ArrayNode announcedPrefixes = mapper.createArrayNode();
         announcedPrefixesFromCP.forEach((CP, IpPrefixList) -> {
