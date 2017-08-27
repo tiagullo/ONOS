@@ -340,9 +340,16 @@ public class SdnIpFib implements SdnIpFibService {
                     .constraints(constraints)
                     .build();
         } else {
-            //We don't use a PointToPointIntent with a WaypointConstraint
-            //to avoid filtering the result of pathService.getPaths() when our
-            //Path is already computed and available as a List<Link>!
+            /*
+            We cannot use a PointToPointIntent with a WaypointConstraint
+            because the set of paths filtered by PointToPointIntentCompiler
+            according to the set of nodes (waypoints) includes just the shortest
+            paths, but maybe CRR selected a longer path to minimize the MLU: in
+            this case the intent compilation would fail!
+            The drawback is that LinkCollectionIntentCompiler does not take into
+            account protection so ONOS is not able to automatically recover from
+            failures!
+            */
             return LinkCollectionIntent.builder()
                     .appId(appId)
                     .key(key)
