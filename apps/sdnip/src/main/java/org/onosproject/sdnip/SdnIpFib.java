@@ -213,8 +213,8 @@ public class SdnIpFib implements SdnIpFibService {
                 prefixPairs.get(withdrawnPrefix).forEach(dstPrefix -> {
                     // remove all the intents involving (withdrawnPrefix, *) and
                     // (*, withdrawnPrefix) flows
-                    String keyStringAB = withdrawnPrefix.toString().concat("-").concat(dstPrefix.toString());
-                    String keyStringBA = dstPrefix.toString().concat("-").concat(withdrawnPrefix.toString());
+                    String keyStringAB = withdrawnPrefix + "-" + dstPrefix;
+                    String keyStringBA = dstPrefix + "-" + withdrawnPrefix;
                     Key keyRemovedAB = Key.of(keyStringAB, appId);
                     Key keyRemovedBA = Key.of(keyStringBA, appId);
 
@@ -387,7 +387,7 @@ public class SdnIpFib implements SdnIpFibService {
                 egressPrefix.prefixLength() * PRIORITY_MULTIPLIER + PRIORITY_OFFSET;
 
         // Intent key
-        Key key = Key.of(ingressPrefix.toString().concat("-").concat(egressPrefix.toString()), appId);
+        Key key = Key.of(ingressPrefix + "-" + egressPrefix, appId);
 
         return generateConnectivityIntent(appId,
                                  key,
@@ -866,8 +866,8 @@ public class SdnIpFib implements SdnIpFibService {
             RoutingConfiguration r = routingConfigurations.get(routingID);
             for (Route route: r.r_config) {
                 Key intentKey = Key.of(
-                    route.demand.get(0).concat("-").concat(route.demand.get(1))
-                    , appId);
+                        route.demand.get(0) + "-" + route.demand.get(1)
+                        , appId);
                 Intent modifiedIntent = null;
                 if (routeIntentsSingle.containsKey(intentKey)) {
                     /* We cannot modify the attributes (e.g. links) of an Intent
