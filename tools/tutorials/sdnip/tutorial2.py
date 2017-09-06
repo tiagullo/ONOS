@@ -5,12 +5,18 @@ from mininet.log import info, debug, setLogLevel
 from mininet.net import Mininet
 from mininet.node import Host, RemoteController
 from mininet.topo import Topo
-import os
+import os, subprocess, distutils.spawn
 
 QUAGGA_DIR = '/usr/lib/quagga'
 # Must exist and be owned by quagga user (quagga:quagga by default on Ubuntu)
 QUAGGA_RUN_DIR = '/var/run/quagga'
 CONFIG_DIR = 'configs'
+
+def is_installed(name):
+    return distutils.spawn.find_executable(name) is not None
+
+if not is_installed('iperf3'):
+	subprocess.call("sudo apt-get -q -y install iperf3".split())
 
 class SdnIpHost(Host):
     def __init__(self, name, ip, route, *args, **kwargs):
@@ -155,50 +161,66 @@ class SdnIpTopo( Topo ):
 topos = { 'sdnip' : SdnIpTopo }
 
 if __name__ == '__main__':
-#    setLogLevel('debug')
+    IPERF_OUTPUT_TO_FILE = True # save stdout/stderr to hx-from-hy file
+
+    #setLogLevel('debug')
     topo = SdnIpTopo()
 
     net = Mininet(topo=topo, controller=RemoteController)
 
     net.start()
 
-    #check if ONOS_ROOT is active or not. if doesn't find the variable, the system is forced to exit
+    # check if ONOS_ROOT is available in the environment variables
     if 'ONOS_ROOT' not in os.environ:
-        print 'Run "sudo python" with -E option!'
+        print 'You must run "sudo -E python %s" to preserve environment variables!' % __file__
         net.stop()
         exit()
 
-    #it will start the istance of onos, without terminal, in background with loaded config
-    os.system("cd /home/mininet/onos/tools/tutorials/sdnip/configs && onos-netcfg localhost network-cfg.json &")
+    # configure ONOS applications
+    os.system("$ONOS_ROOT/tools/test/bin/onos-netcfg localhost $ONOS_ROOT/tools/tutorials/sdnip/configs/network-cfg.json")
 
-    host_list = [host for host in net.hosts if 'h' in host.name]
-    for host in host_list:
-        for host2 in [h for h in host_list if h != host]:
-            cmd = "iperf3 -s -p %d &" % (5000+int(host2.name[1:]))
-            #print 'host', host, cmd
-            host.cmd(cmd)
+    # run multiple iperf3 server instances on each host, one for any other host on port is 5000 + host number
+    hostList = filter(lambda host: 'h' in host.name, net.hosts)
+    for dstHost in hostList:
+        for srcHost in filter(lambda host: host != dstHost, hostList):
+            if IPERF_OUTPUT_TO_FILE:
+                cmd = "iperf3 -s -p %d > %s-from-%s 2>&1 &" % (5000 + int(srcHost.name[1:]), dstHost.name, srcHost.name)
+            else:
+                cmd = "iperf3 -s -p %d &" % (5000 + int(srcHost.name[1:]))
+            dstHost.cmd(cmd)
 
-    TM_per_demand = {('192.168.1.1', '192.168.5.1'): [15, 1500, 30], ('192.168.2.1', '192.168.4.1'): [20, 100, 150]}
+    # in Mbit/s
+    TM_per_demand = {('192.168.1.1', '192.168.5.1'): [10, 20, 30, 40, 50], ('192.168.2.1', '192.168.10.1'): [50, 100, 150, 200, 250]}
+
+    # TODO wait for routes announcements
     raw_input('press enter to continue')
-    comandi = {}
 
+    def getHostFromIP(ip):
+        return filter(lambda host: ip in host.params['ip'], net.hosts)[0]
+
+    # create the list of iperf3 commands to be executed by each host
+    commands = {}
     for demand in TM_per_demand:
         cmd = '('
-        srcHost = [host for host in net.hosts if demand[0]+'/24' in host.params['ip']][0]
+        srcHost = getHostFromIP(demand[0] + '/24')
         port = 5000 + int(srcHost.name[1:])
         for bw in TM_per_demand[demand]:
-            cmd += ('iperf3 -c %s -b %dM -p %d -t 5 -V; ' % (demand[1] , bw, port))
+            cmd += ('iperf3 -c %s -b %dM -p %d -t 20 -V; ' % (demand[1] , bw, port))
         cmd += ') &'
-        comandi[demand[0] + '/24'] = cmd
-    #print comandi
+        commands[demand[0] + '/24'] = cmd
 
-    for hostIP in comandi:
-        [host for host in net.hosts if hostIP in host.params['ip']][0].cmd( comandi[hostIP] )
+    # execute, for each host, its sequence of commands, sequentially but in background so that each sequence is
+    # started in parallel
+    for hostIP in commands:
+        getHostFromIP(hostIP).cmd(commands[hostIP])
 
-
-    #os.system("comando &")
     CLI(net)
 
     net.stop()
+
+    if IPERF_OUTPUT_TO_FILE:
+    for dstHost in hostList:
+        for srcHost in filter(lambda host: host != dstHost, hostList):
+            os.system('echo; echo iperf3 %s-from-%s; cat %s-from-%s' % (dstHost.name, srcHost.name, dstHost.name, srcHost.name))
 
     info("done\n")
