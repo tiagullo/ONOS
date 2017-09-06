@@ -5,6 +5,7 @@ from mininet.log import info, debug, setLogLevel
 from mininet.net import Mininet
 from mininet.node import Host, RemoteController
 from mininet.topo import Topo
+import os
 
 QUAGGA_DIR = '/usr/lib/quagga'
 # Must exist and be owned by quagga user (quagga:quagga by default on Ubuntu)
@@ -161,8 +162,41 @@ if __name__ == '__main__':
 
     net.start()
 
-    #os.system("comando &")
+    #check if ONOS_ROOT is active or not. if doesn't find the variable, the system is forced to exit
+    if 'ONOS_ROOT' not in os.environ:
+        print 'Run "sudo python" with -E option!'
+        net.stop()
+        exit()
 
+    #it will start the istance of onos, without terminal, in background with loaded config
+    os.system("cd /home/mininet/onos/tools/tutorials/sdnip/configs && onos-netcfg localhost network-cfg.json &")
+
+    host_list = [host for host in net.hosts if 'h' in host.name]
+    for host in host_list:
+        for host2 in [h for h in host_list if h != host]:
+            cmd = "iperf3 -s -p %d &" % (5000+int(host2.name[1:]))
+            #print 'host', host, cmd
+            host.cmd(cmd)
+
+    TM_per_demand = {('192.168.1.1', '192.168.5.1'): [15, 1500, 30], ('192.168.2.1', '192.168.4.1'): [20, 100, 150]}
+    raw_input('press enter to continue')
+    comandi = {}
+
+    for demand in TM_per_demand:
+        cmd = '('
+        srcHost = [host for host in net.hosts if demand[0]+'/24' in host.params['ip']][0]
+        port = 5000 + int(srcHost.name[1:])
+        for bw in TM_per_demand[demand]:
+            cmd += ('iperf3 -c %s -b %dM -p %d -t 5 -V; ' % (demand[1] , bw, port))
+        cmd += ') &'
+        comandi[demand[0] + '/24'] = cmd
+    #print comandi
+
+    for hostIP in comandi:
+        [host for host in net.hosts if hostIP in host.params['ip']][0].cmd( comandi[hostIP] )
+
+
+    #os.system("comando &")
     CLI(net)
 
     net.stop()
