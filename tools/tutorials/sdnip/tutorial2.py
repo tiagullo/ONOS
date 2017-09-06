@@ -219,8 +219,8 @@ if __name__ == '__main__':
     net.stop()
 
     if IPERF_OUTPUT_TO_FILE:
-    for dstHost in hostList:
-        for srcHost in filter(lambda host: host != dstHost, hostList):
-            os.system('echo; echo iperf3 %s-from-%s; cat %s-from-%s' % (dstHost.name, srcHost.name, dstHost.name, srcHost.name))
+        for dstHost in hostList:
+            for srcHost in filter(lambda host: host != dstHost, hostList):
+                os.system('echo; echo iperf3 %s-from-%s; cat %s-from-%s' % (dstHost.name, srcHost.name, dstHost.name, srcHost.name))
 
     info("done\n")
