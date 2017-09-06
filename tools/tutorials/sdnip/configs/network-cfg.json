@@ -63,6 +63,9 @@
                     }
                 ]
             }
+        },
+        "org.onosproject.provider.of.flow.impl.OpenFlowRuleProvider" : {
+            "flowPollFrequency" : 5
         }
     }
 }
