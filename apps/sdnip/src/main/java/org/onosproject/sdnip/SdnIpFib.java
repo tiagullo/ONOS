@@ -147,6 +147,14 @@ public class SdnIpFib implements SdnIpFibService {
 
     @Deactivate
     public void deactivate() {
+        intentSynchronizer.removeIntentsByAppId(appId);
+        routeIntentsSingle.clear();
+        announcedPrefixesFromCP.clear();
+        MACFromCP.clear();
+        TM.clear();
+        TMSamples.clear();
+        routingConfigurations.clear();
+        prefixPairs.clear();
         interfaceService.removeListener(interfaceListener);
         routeService.removeListener(routeListener);
         flowRuleService.removeListener(flowStatsListener);
