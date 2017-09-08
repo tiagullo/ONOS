@@ -162,6 +162,10 @@ topos = { 'sdnip' : SdnIpTopo }
 
 if __name__ == '__main__':
     IPERF_OUTPUT_TO_FILE = True # save stdout/stderr to hx-from-hy file
+    DEMO_ONOS_BUILD = True
+    IPERF_VERSION = 3
+    # iperf3 has TCP bandwith configurable but does not allow concurrent clients (sometimes it hangs and results busy)
+    # iperf2 has only UDP bandwith configurable but does allow concurrent clients (even if we connect to it sequentially)
 
     #setLogLevel('debug')
     topo = SdnIpTopo()
@@ -170,57 +174,71 @@ if __name__ == '__main__':
 
     net.start()
 
-    # check if ONOS_ROOT is available in the environment variables
-    if 'ONOS_ROOT' not in os.environ:
-        print 'You must run "sudo -E python %s" to preserve environment variables!' % __file__
-        net.stop()
-        exit()
+    if DEMO_ONOS_BUILD:
+        # check if ONOS_ROOT is available in the environment variables
+        if 'ONOS_ROOT' not in os.environ:
+            print 'You must run "sudo -E python %s" to preserve environment variables!' % __file__
+            net.stop()
+            exit()
 
-    # configure ONOS applications
-    os.system("$ONOS_ROOT/tools/test/bin/onos-netcfg localhost $ONOS_ROOT/tools/tutorials/sdnip/configs/network-cfg.json")
+        # configure ONOS applications
+        os.system("$ONOS_ROOT/tools/test/bin/onos-netcfg localhost $ONOS_ROOT/tools/tutorials/sdnip/configs/network-cfg.json")
 
-    # run multiple iperf3 server instances on each host, one for any other host on port is 5000 + host number
-    hostList = filter(lambda host: 'h' in host.name, net.hosts)
-    for dstHost in hostList:
-        for srcHost in filter(lambda host: host != dstHost, hostList):
-            if IPERF_OUTPUT_TO_FILE:
-                cmd = "iperf3 -s -p %d > %s-from-%s 2>&1 &" % (5000 + int(srcHost.name[1:]), dstHost.name, srcHost.name)
-            else:
-                cmd = "iperf3 -s -p %d &" % (5000 + int(srcHost.name[1:]))
-            dstHost.cmd(cmd)
+        # run multiple iperf3 server instances on each host, one for any other host on port is 5000 + host number
+        hostList = filter(lambda host: 'h' in host.name, net.hosts)
+        for dstHost in hostList:
+            for srcHost in filter(lambda host: host != dstHost, hostList):
+                if IPERF_OUTPUT_TO_FILE:
+                    if IPERF_VERSION == 3:
+                        cmd = "iperf3 -s -p %d > %s-from-%s.log 2>&1 &" % (5000 + int(srcHost.name[1:]), dstHost.name, srcHost.name)
+                    else:
+                        cmd = "iperf -u -s -p %d > %s-from-%s.log 2>&1 &" % (5000 + int(srcHost.name[1:]), dstHost.name, srcHost.name)
+                else:
+                    if IPERF_VERSION == 3:
+                        cmd = "iperf3 -s -p %d &" % (5000 + int(srcHost.name[1:]))
+                    else:
+                        cmd = "iperf -u -s -p %d &" % (5000 + int(srcHost.name[1:]))
+                dstHost.cmd(cmd)
 
-    # in Mbit/s
-    TM_per_demand = {('192.168.1.1', '192.168.5.1'): [10, 20, 30, 40, 50], ('192.168.2.1', '192.168.10.1'): [50, 100, 150, 200, 250]}
+        # in Mbit/s
+        TM_per_demand = {('192.168.4.1', '192.168.3.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.3.1', '192.168.5.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.3.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.4.1', '192.168.5.1'): [10, 4, 9, 2, 2, 4, 10, 4, 9, 2, 2, 4], ('192.168.2.1', '192.168.4.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.2.1', '192.168.3.1'): [2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 3], ('192.168.5.1', '192.168.4.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.3.1', '192.168.4.1'): [3, 4, 5, 3, 4, 6, 3, 4, 5, 3, 4, 6], ('192.168.5.1', '192.168.2.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.4.1', '192.168.2.1'): [2, 2, 5, 4, 2, 2, 2, 2, 5, 4, 2, 2], ('192.168.2.1', '192.168.5.1'): [2, 6, 2, 2, 2, 2, 2, 6, 2, 2, 2, 2], ('192.168.3.1', '192.168.2.1'): [20, 24, 23, 22, 14, 15, 20, 24, 23, 22, 14, 15]}
+        AGGREGATION_INTERVAL = 10
 
-    # TODO wait for routes announcements
-    raw_input('press enter to continue')
+        def getHostFromIP(ip):
+            return filter(lambda host: ip in host.params['ip'], net.hosts)[0]
 
-    def getHostFromIP(ip):
-        return filter(lambda host: ip in host.params['ip'], net.hosts)[0]
+        # create the list of iperf3 commands to be executed by each host
+        commands = {}
+        for demand in TM_per_demand:
+            cmd = '('
+            srcHost = getHostFromIP(demand[0] + '/24')
+            port = 5000 + int(srcHost.name[1:])
+            for bw_index, bw in enumerate(TM_per_demand[demand]):
+                if IPERF_VERSION == 3:
+                    cmd += ('iperf3 -c %s -b %dM -p %d -t %d -V; ' % (demand[1] , bw, port, AGGREGATION_INTERVAL if bw_index != len(TM_per_demand[demand])-1 else 2*AGGREGATION_INTERVAL))
+                else:
+                    cmd += ('iperf -u -c %s -b %dM -p %d -t %d -V; ' % (demand[1] , bw, port, AGGREGATION_INTERVAL if bw_index != len(TM_per_demand[demand])-1 else 2*AGGREGATION_INTERVAL))
+            cmd += ') &'
+            commands[demand[0] + '/24'] = cmd
 
-    # create the list of iperf3 commands to be executed by each host
-    commands = {}
-    for demand in TM_per_demand:
-        cmd = '('
-        srcHost = getHostFromIP(demand[0] + '/24')
-        port = 5000 + int(srcHost.name[1:])
-        for bw in TM_per_demand[demand]:
-            cmd += ('iperf3 -c %s -b %dM -p %d -t 20 -V; ' % (demand[1] , bw, port))
-        cmd += ') &'
-        commands[demand[0] + '/24'] = cmd
+        # TODO wait for routes announcements
+        raw_input('Wait for BGP announcement, then press enter to generate traffic from TMs\n')
 
-    # execute, for each host, its sequence of commands, sequentially but in background so that each sequence is
-    # started in parallel
-    for hostIP in commands:
-        getHostFromIP(hostIP).cmd(commands[hostIP])
+        # execute, for each host, its sequence of commands, sequentially but in background so that each sequence is
+        # started in parallel
+        for hostIP in commands:
+            getHostFromIP(hostIP).cmd(commands[hostIP])
 
     CLI(net)
 
     net.stop()
 
-    if IPERF_OUTPUT_TO_FILE:
-        for dstHost in hostList:
-            for srcHost in filter(lambda host: host != dstHost, hostList):
-                os.system('echo; echo iperf3 %s-from-%s; cat %s-from-%s' % (dstHost.name, srcHost.name, dstHost.name, srcHost.name))
+    if DEMO_ONOS_BUILD:
+        if IPERF_OUTPUT_TO_FILE:
+            for dstHost in hostList:
+                for srcHost in filter(lambda host: host != dstHost, hostList):
+                    os.system('echo; echo iperf %s-from-%s.log; cat %s-from-%s.log' % (dstHost.name, srcHost.name, dstHost.name, srcHost.name))
+            os.system('rm *-from-*.log')
+        #os.system("$ONOS_ROOT/tools/dev/bin/onos-app localhost deactivate org.onosproject.sdnip")
 
     info("done\n")
