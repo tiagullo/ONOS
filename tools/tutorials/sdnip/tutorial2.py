@@ -5,7 +5,7 @@ from mininet.log import info, debug, setLogLevel
 from mininet.net import Mininet
 from mininet.node import Host, RemoteController
 from mininet.topo import Topo
-import os, subprocess, distutils.spawn
+import os, subprocess, distutils.spawn, socket, json, glob, urllib2, base64, time
 
 QUAGGA_DIR = '/usr/lib/quagga'
 # Must exist and be owned by quagga user (quagga:quagga by default on Ubuntu)
@@ -16,7 +16,22 @@ def is_installed(name):
     return distutils.spawn.find_executable(name) is not None
 
 if not is_installed('iperf3'):
-	subprocess.call("sudo apt-get -q -y install iperf3".split())
+    subprocess.call("sudo apt-get -q -y install iperf3".split())
+
+if not is_installed('ITGRecv'):
+    subprocess.call("sudo apt-get -q -y install d-itg".split())
+
+
+def json_GET_req(url):
+    try:
+        request = urllib2.Request(url)
+        base64string = base64.encodestring('%s:%s' % ('onos', 'rocks')).replace('\n', '')
+        request.add_header("Authorization", "Basic %s" % base64string)
+        response = urllib2.urlopen(request)
+        return json.loads(response.read())
+    except IOError as e:
+        print e
+        return ""
 
 class SdnIpHost(Host):
     def __init__(self, name, ip, route, *args, **kwargs):
@@ -161,11 +176,17 @@ class SdnIpTopo( Topo ):
 topos = { 'sdnip' : SdnIpTopo }
 
 if __name__ == '__main__':
-    IPERF_OUTPUT_TO_FILE = True # save stdout/stderr to hx-from-hy file
+    IPERF_OUTPUT_TO_FILE = False # save stdout/stderr to hx-from-hy file
     DEMO_ONOS_BUILD = True
-    IPERF_VERSION = 3
+    RUN_INTO_XTERM = True
+    TRAFFIC_GEN_TOOL = 'IPERF3'
+    assert TRAFFIC_GEN_TOOL in ['D-ITG', 'IPERF2', 'IPERF3']
+
     # iperf3 has TCP bandwith configurable but does not allow concurrent clients (sometimes it hangs and results busy)
     # iperf2 has only UDP bandwith configurable but does allow concurrent clients (even if we connect to it sequentially)
+    # D-ITG allows to configure duration, pkt/sec, byte/pkt and supports multiple clients in parallel
+    # ITGRecv
+    # ITGSend -T UDP -a 127.0.0.1 -C 77000 -c 2048 -t 10000 -l sender.log; ITGDec sender.log | grep bitrate
 
     #setLogLevel('debug')
     topo = SdnIpTopo()
@@ -187,18 +208,26 @@ if __name__ == '__main__':
         # run multiple iperf3 server instances on each host, one for any other host on port is 5000 + host number
         hostList = filter(lambda host: 'h' in host.name, net.hosts)
         for dstHost in hostList:
-            for srcHost in filter(lambda host: host != dstHost, hostList):
-                if IPERF_OUTPUT_TO_FILE:
-                    if IPERF_VERSION == 3:
-                        cmd = "iperf3 -s -p %d > %s-from-%s.log 2>&1 &" % (5000 + int(srcHost.name[1:]), dstHost.name, srcHost.name)
-                    else:
-                        cmd = "iperf -u -s -p %d > %s-from-%s.log 2>&1 &" % (5000 + int(srcHost.name[1:]), dstHost.name, srcHost.name)
-                else:
-                    if IPERF_VERSION == 3:
-                        cmd = "iperf3 -s -p %d &" % (5000 + int(srcHost.name[1:]))
-                    else:
-                        cmd = "iperf -u -s -p %d &" % (5000 + int(srcHost.name[1:]))
+            if TRAFFIC_GEN_TOOL == 'D-ITG':
+                cmd = "ITGRecv &"
+                if RUN_INTO_XTERM:
+                    cmd = 'xterm -xrm \'XTerm.vt100.allowTitleOps: false\' -T %s -e "%s; bash"&' % (dstHost.params['ip'], cmd.replace('&',''))
                 dstHost.cmd(cmd)
+            else:
+                for srcHost in filter(lambda host: host != dstHost, hostList):
+                    if IPERF_OUTPUT_TO_FILE:
+                        if TRAFFIC_GEN_TOOL == 'IPERF3':
+                            cmd = "iperf3 -s -p %d > %s-from-%s.log 2>&1 &" % (5000 + int(srcHost.name[1:]), dstHost.name, srcHost.name)
+                        else:
+                            cmd = "iperf -u -s -p %d > %s-from-%s.log 2>&1 &" % (5000 + int(srcHost.name[1:]), dstHost.name, srcHost.name)
+                    else:
+                        if TRAFFIC_GEN_TOOL == 'IPERF3':
+                            cmd = "iperf3 -s -p %d &" % (5000 + int(srcHost.name[1:]))
+                        else:
+                            cmd = "iperf -u -s -p %d &" % (5000 + int(srcHost.name[1:]))
+                    if RUN_INTO_XTERM:
+                        cmd = 'xterm -xrm \'XTerm.vt100.allowTitleOps: false\' -T %s -e "%s; bash"&' % (dstHost.params['ip'], cmd.replace('&',''))
+                    dstHost.cmd(cmd)
 
         # in Mbit/s
         TM_per_demand = {('192.168.4.1', '192.168.3.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.3.1', '192.168.5.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.3.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.4.1', '192.168.5.1'): [10, 4, 9, 2, 2, 4, 10, 4, 9, 2, 2, 4], ('192.168.2.1', '192.168.4.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.2.1', '192.168.3.1'): [2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 3], ('192.168.5.1', '192.168.4.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.3.1', '192.168.4.1'): [3, 4, 5, 3, 4, 6, 3, 4, 5, 3, 4, 6], ('192.168.5.1', '192.168.2.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.4.1', '192.168.2.1'): [2, 2, 5, 4, 2, 2, 2, 2, 5, 4, 2, 2], ('192.168.2.1', '192.168.5.1'): [2, 6, 2, 2, 2, 2, 2, 6, 2, 2, 2, 2], ('192.168.3.1', '192.168.2.1'): [20, 24, 23, 22, 14, 15, 20, 24, 23, 22, 14, 15]}
@@ -214,20 +243,56 @@ if __name__ == '__main__':
             srcHost = getHostFromIP(demand[0] + '/24')
             port = 5000 + int(srcHost.name[1:])
             for bw_index, bw in enumerate(TM_per_demand[demand]):
-                if IPERF_VERSION == 3:
-                    cmd += ('iperf3 -c %s -b %dM -p %d -t %d -V; ' % (demand[1] , bw, port, AGGREGATION_INTERVAL if bw_index != len(TM_per_demand[demand])-1 else 2*AGGREGATION_INTERVAL))
+                if TRAFFIC_GEN_TOOL == 'IPERF3':
+                    cmd += ('iperf3 -c %s -b %dM -p %d -t %d -V; ' % (demand[1] , bw, port, AGGREGATION_INTERVAL if bw_index != len(TM_per_demand[demand])-1 else 3*AGGREGATION_INTERVAL))
+                elif TRAFFIC_GEN_TOOL == 'IPERF2':
+                    cmd += ('iperf -u -c %s -b %dM -p %d -t %d -V; ' % (demand[1] , bw, port, AGGREGATION_INTERVAL if bw_index != len(TM_per_demand[demand])-1 else 3*AGGREGATION_INTERVAL))
                 else:
-                    cmd += ('iperf -u -c %s -b %dM -p %d -t %d -V; ' % (demand[1] , bw, port, AGGREGATION_INTERVAL if bw_index != len(TM_per_demand[demand])-1 else 2*AGGREGATION_INTERVAL))
+                    bw = bw*1e6
+                    cmd += ('ITGSend -T UDP -a %s -C %d -c 512 -t %d; ' % (demand[1], int(bw/8/512)+1, AGGREGATION_INTERVAL if bw_index != len(TM_per_demand[demand])-1 else 3*AGGREGATION_INTERVAL))
             cmd += ') &'
-            commands[demand[0] + '/24'] = cmd
+            if demand[0] + '/24' not in commands:
+                commands[demand[0] + '/24'] = []
+            commands[demand[0] + '/24'].append(cmd)
 
-        # TODO wait for routes announcements
-        raw_input('Wait for BGP announcement, then press enter to generate traffic from TMs\n')
+        # Parse SDN-IP configuration files to estimate the number of expected intents (read via ONOS REST API),
+        # so that it can automatically wait for the BGP prefixes propagation before starting the traffic!
+        SDNIP_CONF_DIR = '%s/tools/tutorials/sdnip/configs/' % os.popen("echo $ONOS_ROOT").read().strip()
+        # Parse the number of peering interfaces from network-cfg.json
+        with open('%snetwork-cfg.json' % SDNIP_CONF_DIR) as data_file:
+            data = json.load(data_file)
+        peering_if = len(data['apps']['org.onosproject.router']['bgp']['bgpSpeakers'][0]['peers'])
+        # Parse the number of prefixes to be announced from quagga files
+        prefixes_per_peer = []
+        for f in glob.glob('%squagga*.conf' % SDNIP_CONF_DIR):
+            prefixes = int(os.popen("cat %s | grep network | wc -l" % f).read()) - int(os.popen("cat %s | grep \"\!network\" | wc -l" % f).read())
+            if prefixes > 0:
+                prefixes_per_peer.append(prefixes)
+        flows = 0
+        for idx1 in range(len(prefixes_per_peer)):
+            for idx2 in filter(lambda x: x != idx1, range(len(prefixes_per_peer))):
+                for _ in range(prefixes_per_peer[idx1]):
+                    for _ in range(prefixes_per_peer[idx2]):
+                     flows += 1
+        intents = 0
+        while intents < peering_if*2*3 + flows:
+            intents = len(json_GET_req('http://localhost:8181/onos/v1/intents')['intents'])
+            print 'Waiting for BGP announcements (%d more intents expected)...' % ((peering_if*2*3 + flows) - intents)
+            time.sleep(1)
+        # Wait for a magic packet (any UDP pkt rx on port 12345) to generate the traffic
+        print 'Ready! Send the magic UDP packet on port 12345 to generate traffic from TMs'
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.bind(('',12345))
+        s.recvfrom(1024)
+        s.close()
 
-        # execute, for each host, its sequence of commands, sequentially but in background so that each sequence is
+        # execute, for each host, its sequence of commands, sequentially but in background so that each sequence of each host is
         # started in parallel
         for hostIP in commands:
-            getHostFromIP(hostIP).cmd(commands[hostIP])
+            for command_list in commands[hostIP]:
+                if RUN_INTO_XTERM:
+                    command_list = 'xterm -xrm \'XTerm.vt100.allowTitleOps: false\' -T %s -e "%s; bash"&' % (hostIP, command_list.replace('&',''))
+                getHostFromIP(hostIP).cmd(command_list)
 
     CLI(net)
 
@@ -239,6 +304,5 @@ if __name__ == '__main__':
                 for srcHost in filter(lambda host: host != dstHost, hostList):
                     os.system('echo; echo iperf %s-from-%s.log; cat %s-from-%s.log' % (dstHost.name, srcHost.name, dstHost.name, srcHost.name))
             os.system('rm *-from-*.log')
-        #os.system("$ONOS_ROOT/tools/dev/bin/onos-app localhost deactivate org.onosproject.sdnip")
-
-    info("done\n")
+    if RUN_INTO_XTERM:
+        os.system('kill -9 `pidof xterm`')
