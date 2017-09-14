@@ -201,19 +201,31 @@ if __name__ == '__main__':
         LINK_CAPACITY = 1e8
         startOnFirstNonZeroSample = True
 
+        MIN_LEN = 10
+        K = 3
+        EXACTLY_K = True
+        ITERATIONS = 5
+        UNSPLITTABLE = True
+        OLD_RR_POLICY = 2
+        OBJ_FX = 'min_avg_MLU'
+        INITIALIZATION = 'sequential'
+        CIRCULAR_CLUSTERS = False
+        AUTO_CACHING = False
+        ir = IR_min_avg_MLU
+        rr = RR_min_avg_MLU
+        delta_def = 'MLU'
+        sp = SP.min_sum_delta
+        flp = FLP.min_sum_delta
+        obj_fx_RTA = SP.sum_obj_fx
+        obj_fx_RA = FLP.sum_obj_fx
+
     Set these parameters in ~/robust-routing/onos/TMtoIperf.py
         ABILENA_DATA_TO_SDNIP_TOPO = True
 
         MAX_NUM_OF_TM = 288
-        SAMPLED_NUM_OF_TM = int(Tstop/AGGREGATION_INTERVAL)
-        UNSPLITTABLE = True
         day = 6
         max_TM_value = 1e8
         min_TM_value = 2e6
-
-        MIN_LEN = 3
-        K = 3
-        ITERATIONS = 5
 
     Run ~/robust-routing/onos/TMtoIperf.py and copy 'TM_per_demand' in this file
     
