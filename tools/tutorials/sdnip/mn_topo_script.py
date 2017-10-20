@@ -11,7 +11,8 @@ import create_abilene_conf as abilene
 QUAGGA_DIR = '/usr/lib/quagga'
 # Must exist and be owned by quagga user (quagga:quagga by default on Ubuntu)
 QUAGGA_RUN_DIR = '/var/run/quagga'
-CONFIG_DIR = 'configs-abilene'
+CONFIG_DIR_ABILENE = 'configs-abilene'
+CONFIG_DIR_SDNIP = 'configs'
 
 def is_installed(name):
     return distutils.spawn.find_executable(name) is not None
@@ -82,22 +83,22 @@ class Router(Host):
         Host.terminate(self)
 
 
-class SdnIpTopo( Topo ):
-    "SDN-IP tutorial topology"
+class AbileneTopo( Topo ):
+    "Abilene topology"
 
     def build( self ):
         switches = {}
         for x, node in enumerate(abilene.nodes):
             switches['s%d' % (x+1)] = self.addSwitch('s%d' % (x+1), dpid='00000000000000%0.2x' % (0xa0+x+1))
 
-        zebraConf = '%s/zebra.conf' % CONFIG_DIR
+        zebraConf = '%s/zebra.conf' % CONFIG_DIR_ABILENE
 
         # Switches we want to attach our routers to, in the correct order
         attachmentSwitches = sorted(switches.keys())
 
         for i in range(1, len(attachmentSwitches)+1):
             name = 'r%s' % i
-            # Using 10.0.2.1 creates conflicts with VirtualBox iface
+            # Use 10.0.9.1 instead of 10.0.2.1 to avoid conflicts with VirtualBox iface
             if (i==2):
                 eth0 = { 'mac' : '0a:00:00:00:%0.2X:01' % (len(attachmentSwitches) + 1),
                         'ipAddrs' : ['10.0.%s.1/24' % (len(attachmentSwitches) + 1)] }
@@ -109,7 +110,7 @@ class SdnIpTopo( Topo ):
             intfs = { '%s-eth0' % name : eth0,
                       '%s-eth1' % name : eth1 }
 
-            quaggaConf = '%s/quagga%s.conf' % (CONFIG_DIR, i)
+            quaggaConf = '%s/quagga%s.conf' % (CONFIG_DIR_ABILENE, i)
 
             router = self.addHost(name, cls=Router, quaggaConfFile=quaggaConf,
                                   zebraConfFile=zebraConf, intfDict=intfs,
@@ -130,7 +131,7 @@ class SdnIpTopo( Topo ):
         #             'bgp-eth1' : bgpEth1 }
 
         bgp = self.addHost( "bgp", cls=Router,
-                             quaggaConfFile = '%s/quagga-sdn.conf' % CONFIG_DIR,
+                             quaggaConfFile = '%s/quagga-sdn.conf' % CONFIG_DIR_ABILENE,
                              zebraConfFile = zebraConf,
                              intfDict=bgpIntfs,
                              inNamespace=False,
@@ -150,34 +151,180 @@ class SdnIpTopo( Topo ):
         #root = self.addHost( 'root', inNamespace=False, ip='10.10.10.2/24' )
         #self.addLink( root, bgp )
 
+class SdnIpTopo( Topo ):
+    "SDN-IP tutorial topology"
 
+    def build( self ):
+        s1 = self.addSwitch('s1', dpid='00000000000000a1')
+        s2 = self.addSwitch('s2', dpid='00000000000000a2')
+        s3 = self.addSwitch('s3', dpid='00000000000000a3')
+        s4 = self.addSwitch('s4', dpid='00000000000000a4')
+        s5 = self.addSwitch('s5', dpid='00000000000000a5')
+        s6 = self.addSwitch('s6', dpid='00000000000000a6')
 
+        zebraConf = '%s/zebra.conf' % CONFIG_DIR_SDNIP
 
-topos = { 'sdnip' : SdnIpTopo }
+        # Switches we want to attach our routers to, in the correct order
+        attachmentSwitches = [s1, s2, s5, s6]
+
+        for i in range(1, 5+1):
+            name = 'r%s' % i
+	    # Use 10.0.9.1 instead of 10.0.2.1 to avoid conflicts with VirtualBox iface
+	    if (i==2):
+		 eth0 = { 'mac' : '0a:00:00:00:0%s:01' % 9,
+                     'ipAddrs' : ['10.0.%s.1/24' % 9] }
+	    else:
+		 eth0 = { 'mac' : '0a:00:00:00:0%s:01' % i,
+                     'ipAddrs' : ['10.0.%s.1/24' % i] }
+
+            eth1 = { 'ipAddrs' : ['192.168.%s.254/24' % i] }
+
+	    # Add a third interface to router R1
+	    if (i==1):
+		eth2 = { 'ipAddrs' : ['192.168.%s0.254/24' % i] }
+		intfs = { '%s-eth0' % name : eth0,
+                          '%s-eth1' % name : eth1,
+                          '%s-eth2' % name : eth2 }
+	    else:
+                intfs = { '%s-eth0' % name : eth0,
+                          '%s-eth1' % name : eth1 }
+
+            quaggaConf = '%s/quagga%s.conf' % (CONFIG_DIR_SDNIP, i)
+
+            router = self.addHost(name, cls=Router, quaggaConfFile=quaggaConf,
+                                  zebraConfFile=zebraConf, intfDict=intfs,
+                                  route=None)
+
+            host = self.addHost('h%s' % i, cls=SdnIpHost,
+                                ip='192.168.%s.1/24' % i,
+                                route='192.168.%s.254' % i)
+
+	    # Add a second host to router R1
+	    if (i==1):
+		host2 = self.addHost('h%s0' % i, cls=SdnIpHost,
+                        ip='192.168.%s0.1/24' % i,
+                        route='192.168.%s0.254' % i)
+
+	    # Attach router R5 to switch S1
+            if (i==5):
+		self.addLink(router, attachmentSwitches[0])
+            else:
+		self.addLink(router, attachmentSwitches[i-1])
+
+            self.addLink(router, host)
+            if (i==1):
+		self.addLink(router, host2)
+
+        # Set up the internal BGP speaker
+        bgpEth0 = { 'mac':'00:00:00:00:00:01',
+                    'ipAddrs' : ['10.0.1.101/24',
+                                 '10.0.9.101/24',
+                                 '10.0.3.101/24',
+                                 '10.0.4.101/24',
+                                 '10.0.5.101/24',] }
+        bgpEth1 = { 'ipAddrs' : ['10.10.10.20/24'] }
+        bgpIntfs = { 'bgp-eth0' : bgpEth0}#,
+        #             'bgp-eth1' : bgpEth1 }
+
+        bgp = self.addHost( "bgp", cls=Router,
+                             quaggaConfFile = '%s/quagga-sdn.conf' % CONFIG_DIR_SDNIP,
+                             zebraConfFile = zebraConf,
+                             intfDict=bgpIntfs,
+                             inNamespace=False,
+                             route=None)
+
+        self.addLink( bgp, s3 )
+
+        # Connect BGP speaker to the root namespace so it can peer with ONOS
+        #root = self.addHost( 'root', inNamespace=False, ip='10.10.10.2/24' )
+        #self.addLink( root, bgp )
+
+        # Wire up the switches in the topology
+        self.addLink( s1, s2 )
+        self.addLink( s1, s3 )
+        self.addLink( s2, s4 )
+        self.addLink( s3, s4 )
+        self.addLink( s3, s5 )
+        self.addLink( s4, s6 )
+        self.addLink( s5, s6 )
+
+topos = { 'sdnip' : SdnIpTopo, 'abilene' : AbileneTopo }
 
 if __name__ == '__main__':
     IPERF_OUTPUT_TO_FILE = False # save stdout/stderr to hx-from-hy file
-    DEMO_ONOS_BUILD = True
     RUN_INTO_XTERM = True
     XTERM_GEOMETRY = '-geometry 80x20+100+100'
-    TRAFFIC_GEN_TOOL = 'IPERF3'
-    V2 = True
+    TRAFFIC_GEN_TOOL = 'IPERF3'   
     assert TRAFFIC_GEN_TOOL in ['D-ITG', 'IPERF2', 'IPERF3']
 
-    # iperf3 has TCP bandwith configurable but does not allow concurrent clients (sometimes it hangs and results busy)
-    # iperf2 has only UDP bandwith configurable but does allow concurrent clients (even if we connect to it sequentially)
-    # D-ITG allows to configure duration, pkt/sec, byte/pkt and supports multiple clients in parallel
-    # ITGRecv
-    # ITGSend -T UDP -a 127.0.0.1 -C 77000 -c 2048 -t 10000 -l sender.log; ITGDec sender.log | grep bitrate
+    V = 2
+    AUTO_TRAFFIC_GENERATION = True
+    USE_SDNIP_TOPO = False
+    AGGREGATION_INTERVAL = 10
+
+    '''
+    iperf3 has TCP bandwith configurable but does not allow concurrent clients (sometimes it hangs and results busy)
+    iperf2 has only UDP bandwith configurable but does allow concurrent clients (even if we connect to it sequentially)
+    D-ITG allows to configure duration, pkt/sec, byte/pkt and supports multiple clients in parallel
+    ITGRecv
+    ITGSend -T UDP -a 127.0.0.1 -C 77000 -c 2048 -t 10000 -l sender.log; ITGDec sender.log | grep bitrate
+
+    ###################################################################################################################
+
+    [Instructions for ONOS Build 2017 demo]
+
+    Set these parameters in ~/robust-routing/onos/config.py
+        PORT_STATS_POLLING_INTERVAL = 5
+        POLLING_INTERVAL = 5
+        AGGREGATION_INTERVAL = 10
+        Tstop = 10*30
+        LINK_CAPACITY = 1e8
+        startOnFirstNonZeroSample = True
+
+        MIN_LEN = 10
+        K = 3
+        EXACTLY_K = True
+        ITERATIONS = 5
+        UNSPLITTABLE = True
+        OLD_RR_POLICY = 2
+        OBJ_FX = 'min_avg_MLU'
+        INITIALIZATION = 'sequential'
+        CIRCULAR_CLUSTERS = False
+        AUTO_CACHING = False
+        ir = IR_min_avg_MLU
+        rr = RR_min_avg_MLU
+        delta_def = 'MLU'
+        sp = SP.min_sum_delta
+        flp = FLP.min_sum_delta
+        obj_fx_RTA = SP.sum_obj_fx
+        obj_fx_RA = FLP.sum_obj_fx
+        USE_SDNIP_TOPO = True
+        MAX_NUM_OF_TM = 288
+        max_TM_value = 1e8
+        min_TM_value = 2e6
+
+    Run ~/robust-routing/onos/TMtoIperf.py
+    and copy 'TM_per_demand' in this file
+    
+    In 2 terminals run:
+    sudo ip addr add 10.10.10.1/24 dev enp0s3
+    cd ~/onos
+    tools/build/onos-buck build onos --show-output; tools/build/onos-buck run onos-local -- clean debug
+
+    cd ~/onos/tools/tutorials/sdnip
+    sudo service quagga restart; sudo mn -c; sudo -E python mn_topo_script.py
+    
+    Run ~/robust-routing/onos/main.py
+    '''
 
     #setLogLevel('debug')
-    topo = SdnIpTopo()
+    topo = SdnIpTopo() if USE_SDNIP_TOPO else AbileneTopo()
 
     net = Mininet(topo=topo, controller=RemoteController)
 
     net.start()
 
-    if DEMO_ONOS_BUILD:
+    if AUTO_TRAFFIC_GENERATION:
         # check if ONOS_ROOT is available in the environment variables
         if 'ONOS_ROOT' not in os.environ:
             print 'You must run "sudo -E python %s" to preserve environment variables!' % __file__
@@ -185,7 +332,7 @@ if __name__ == '__main__':
             exit()
 
         # configure ONOS applications
-        os.system("$ONOS_ROOT/tools/test/bin/onos-netcfg localhost $ONOS_ROOT/tools/tutorials/sdnip/%s/network-cfg.json" % CONFIG_DIR)
+        os.system("$ONOS_ROOT/tools/test/bin/onos-netcfg localhost $ONOS_ROOT/tools/tutorials/sdnip/%s/network-cfg.json" % (CONFIG_DIR_SDNIP if USE_SDNIP_TOPO else CONFIG_DIR_ABILENE))
 
 
         # run multiple iperf3 server instances on each host, one for any other host on port is 5000 + host number
@@ -213,11 +360,11 @@ if __name__ == '__main__':
                     dstHost.cmd(cmd)
 
         # in Mbit/s
-        TM_per_demand = {('192.168.11.1', '192.168.2.1'): [13, 26, 31, 24, 31, 22, 25, 14, 24, 26, 31, 26, 22, 29, 29, 24, 20, 21, 20, 25, 22, 19, 20, 23, 22, 23, 23, 30, 30, 23, 21, 28, 29, 19, 24, 18, 16, 29, 25, 22], ('192.168.8.1', '192.168.5.1'): [5, 4, 5, 8, 3, 2, 2, 3, 4, 4, 4, 9, 9, 5, 6, 3, 2, 3, 5, 3, 5, 4, 6, 2, 4, 2, 2, 6, 4, 7, 7, 5, 5, 5, 3, 3, 4, 5, 4, 5], ('192.168.8.1', '192.168.9.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.9.1', '192.168.6.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.8.1', '192.168.6.1'): [2, 3, 2, 3, 2, 2, 2, 2, 2, 2, 4, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.11.1', '192.168.9.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.6.1', '192.168.9.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.9.1', '192.168.2.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.8.1', '192.168.2.1'): [15, 10, 11, 11, 12, 14, 14, 16, 17, 15, 9, 11, 13, 14, 13, 13, 13, 11, 12, 10, 8, 12, 12, 16, 13, 10, 18, 16, 19, 17, 13, 11, 14, 12, 13, 16, 9, 15, 20, 15], ('192.168.9.1', '192.168.11.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.6.1', '192.168.11.1'): [2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 4, 3, 2, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.11.1'): [12, 8, 3, 8, 3, 2, 2, 3, 3, 7, 6, 2, 8, 3, 5, 5, 2, 2, 5, 3, 5, 7, 4, 3, 3, 2, 2, 2, 2, 4, 12, 10, 6, 4, 2, 5, 2, 5, 2, 9], ('192.168.6.1', '192.168.2.1'): [3, 4, 2, 5, 4, 4, 2, 2, 3, 2, 5, 3, 3, 3, 4, 3, 2, 2, 3, 5, 3, 2, 3, 4, 2, 3, 2, 2, 3, 3, 4, 4, 5, 2, 2, 4, 2, 2, 2, 5], ('192.168.9.1', '192.168.8.1'): [2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.9.1', '192.168.5.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2], ('192.168.8.1', '192.168.3.1'): [6, 6, 6, 5, 6, 7, 5, 6, 7, 6, 6, 8, 6, 6, 6, 5, 5, 7, 6, 7, 9, 7, 6, 6, 6, 5, 6, 6, 7, 6, 7, 7, 8, 6, 6, 5, 7, 7, 6, 7], ('192.168.2.1', '192.168.6.1'): [2, 2, 6, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 5, 2, 2, 2], ('192.168.11.1', '192.168.8.1'): [69, 29, 66, 35, 59, 40, 70, 54, 79, 56, 41, 37, 48, 42, 68, 37, 49, 99, 87, 41, 24, 36, 58, 42, 74, 57, 32, 25, 29, 32, 43, 33, 46, 51, 46, 32, 55, 49, 27, 42], ('192.168.11.1', '192.168.5.1'): [11, 16, 24, 18, 13, 9, 12, 10, 9, 17, 15, 11, 17, 27, 17, 20, 11, 18, 9, 15, 17, 20, 20, 12, 17, 11, 9, 5, 18, 22, 15, 15, 13, 24, 9, 16, 9, 12, 22, 19], ('192.168.2.1', '192.168.5.1'): [2, 3, 6, 3, 7, 3, 7, 7, 3, 2, 2, 3, 3, 2, 4, 2, 3, 2, 3, 3, 2, 2, 2, 3, 2, 7, 5, 6, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 8], ('192.168.2.1', '192.168.11.1'): [7, 5, 5, 7, 2, 2, 2, 2, 4, 4, 7, 4, 3, 2, 3, 3, 2, 2, 2, 5, 6, 8, 8, 3, 5, 4, 8, 2, 5, 5, 6, 7, 6, 6, 7, 5, 5, 5, 5, 4], ('192.168.2.1', '192.168.8.1'): [3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.3.1', '192.168.2.1'): [16, 16, 16, 11, 17, 16, 19, 17, 18, 15, 15, 18, 14, 16, 17, 20, 19, 16, 16, 16, 16, 15, 17, 16, 15, 15, 17, 15, 13, 14, 15, 15, 18, 17, 16, 20, 17, 13, 16, 14], ('192.168.3.1', '192.168.5.1'): [27, 9, 9, 16, 8, 7, 8, 10, 10, 12, 8, 11, 8, 11, 9, 9, 8, 11, 26, 11, 12, 11, 9, 10, 9, 9, 10, 28, 10, 11, 23, 10, 11, 12, 9, 11, 11, 26, 9, 15], ('192.168.6.1', '192.168.3.1'): [2, 3, 3, 4, 4, 3, 3, 3, 3, 3, 2, 2, 3, 2, 2, 2, 3, 3, 3, 4, 3, 2, 2, 2, 4, 3, 3, 2, 3, 3, 2, 2, 2, 2, 2, 2, 3, 2, 4, 2], ('192.168.5.1', '192.168.3.1'): [2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 3, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.3.1', '192.168.6.1'): [9, 7, 10, 8, 11, 11, 9, 8, 10, 12, 9, 9, 10, 9, 9, 10, 9, 11, 10, 8, 8, 7, 10, 10, 11, 12, 12, 7, 11, 11, 9, 10, 9, 12, 10, 12, 9, 10, 9, 8], ('192.168.2.1', '192.168.9.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.2.1', '192.168.3.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.9.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.2.1'): [25, 6, 8, 13, 8, 8, 8, 12, 71, 18, 7, 5, 21, 14, 10, 11, 8, 13, 19, 8, 8, 9, 15, 11, 9, 12, 11, 10, 8, 10, 12, 11, 9, 9, 10, 13, 7, 6, 10, 14], ('192.168.11.1', '192.168.3.1'): [15, 12, 15, 13, 23, 29, 18, 9, 15, 23, 14, 13, 12, 12, 25, 24, 21, 13, 14, 12, 9, 11, 13, 13, 15, 19, 14, 7, 15, 17, 10, 8, 13, 9, 16, 20, 8, 11, 12, 13], ('192.168.5.1', '192.168.8.1'): [2, 2, 4, 2, 2, 2, 2, 6, 2, 2, 2, 2, 4, 2, 2, 2, 2, 11, 2, 2, 2, 4, 4, 2, 3, 2, 3, 4, 2, 2, 2, 2, 3, 2, 2, 3, 5, 2, 2, 3], ('192.168.8.1', '192.168.11.1'): [11, 6, 11, 17, 9, 6, 6, 10, 8, 10, 9, 10, 14, 8, 7, 6, 8, 9, 8, 9, 8, 6, 7, 5, 7, 9, 5, 6, 8, 10, 12, 7, 9, 14, 5, 6, 5, 7, 5, 8], ('192.168.5.1', '192.168.6.1'): [2, 2, 2, 2, 2, 2, 2, 6, 2, 2, 2, 2, 2, 16, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 5, 2, 2, 2], ('192.168.6.1', '192.168.5.1'): [2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2], ('192.168.6.1', '192.168.8.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.9.1', '192.168.3.1'): [8, 2, 10, 5, 3, 7, 2, 2, 3, 6, 5, 2, 10, 2, 7, 3, 4, 2, 4, 2, 2, 3, 3, 3, 4, 3, 2, 3, 2, 2, 4, 2, 2, 2, 2, 3, 4, 2, 4, 2], ('192.168.3.1', '192.168.9.1'): [2, 3, 3, 3, 2, 2, 2, 2, 2, 3, 2, 3, 2, 3, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 5, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2], ('192.168.11.1', '192.168.6.1'): [5, 3, 5, 5, 2, 3, 4, 2, 3, 3, 5, 3, 2, 7, 2, 5, 2, 5, 2, 4, 2, 2, 2, 3, 3, 2, 3, 2, 2, 2, 4, 2, 3, 6, 2, 2, 2, 5, 2, 2], ('192.168.3.1', '192.168.8.1'): [5, 7, 7, 10, 8, 7, 8, 5, 5, 5, 9, 8, 11, 8, 7, 7, 7, 6, 5, 6, 4, 7, 6, 6, 7, 6, 5, 5, 8, 7, 8, 7, 8, 5, 7, 4, 5, 7, 7, 5], ('192.168.3.1', '192.168.11.1'): [10, 12, 14, 15, 13, 14, 13, 11, 12, 23, 14, 13, 14, 12, 11, 14, 11, 17, 12, 8, 8, 10, 12, 12, 14, 13, 11, 9, 12, 15, 14, 11, 11, 12, 9, 13, 9, 13, 10, 8]}
-        if V2:
+        TM_per_demand = {('192.168.11.1', '192.168.2.1'): [6, 21, 23, 17, 27, 14, 14, 25, 21, 14, 20, 14], ('192.168.3.1', '192.168.5.1'): [8, 9, 8, 9, 16, 10, 10, 10, 10, 10, 10, 28], ('192.168.6.1', '192.168.3.1'): [2, 3, 2, 2, 5, 4, 2, 3, 3, 2, 4, 4], ('192.168.6.1', '192.168.5.1'): [2, 2, 3, 2, 2, 3, 3, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.3.1'): [2, 3, 2, 2, 2, 3, 4, 5, 2, 2, 2, 2], ('192.168.3.1', '192.168.6.1'): [7, 9, 11, 9, 13, 9, 8, 7, 11, 10, 15, 10], ('192.168.5.1', '192.168.11.1'): [5, 7, 8, 3, 6, 8, 7, 7, 2, 2, 5, 10], ('192.168.5.1', '192.168.6.1'): [2, 2, 2, 2, 2, 2, 2, 11, 2, 2, 9, 2], ('192.168.2.1', '192.168.3.1'): [2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.2.1'): [10, 20, 20, 16, 5, 13, 13, 15, 14, 14, 10, 20], ('192.168.2.1', '192.168.6.1'): [2, 4, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2], ('192.168.11.1', '192.168.6.1'): [2, 4, 4, 2, 4, 3, 2, 5, 5, 2, 5, 6], ('192.168.11.1', '192.168.5.1'): [12, 9, 13, 18, 16, 10, 12, 17, 16, 15, 29, 10], ('192.168.6.1', '192.168.11.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.11.1', '192.168.3.1'): [5, 13, 13, 12, 10, 31, 27, 17, 15, 13, 11, 16], ('192.168.2.1', '192.168.5.1'): [2, 3, 4, 3, 2, 2, 2, 2, 2, 3, 2, 2], ('192.168.6.1', '192.168.2.1'): [2, 6, 4, 5, 4, 5, 5, 8, 6, 2, 4, 4], ('192.168.2.1', '192.168.11.1'): [4, 6, 2, 2, 2, 2, 4, 6, 2, 2, 2, 6], ('192.168.3.1', '192.168.2.1'): [20, 24, 23, 22, 14, 15, 16, 16, 18, 19, 14, 15], ('192.168.3.1', '192.168.11.1'): [8, 9, 14, 13, 15, 9, 9, 13, 13, 9, 15, 10]}
+
+	if V in [1,2]:
             for dem in TM_per_demand:
                 TM_per_demand[dem].extend(TM_per_demand[dem])
-        AGGREGATION_INTERVAL = 10
 
         def getHostFromIP(ip):
             return filter(lambda host: ip in host.params['ip'], net.hosts)[0]
@@ -243,7 +390,7 @@ if __name__ == '__main__':
 
         # Parse SDN-IP configuration files to estimate the number of expected intents (read via ONOS REST API),
         # so that it can automatically wait for the BGP prefixes propagation before starting the traffic!
-        SDNIP_CONF_DIR = '%s/tools/tutorials/sdnip/%s/' % (os.popen("echo $ONOS_ROOT").read().strip(), CONFIG_DIR)
+        SDNIP_CONF_DIR = '%s/tools/tutorials/sdnip/%s/' % (os.popen("echo $ONOS_ROOT").read().strip(), CONFIG_DIR_SDNIP if USE_SDNIP_TOPO else CONFIG_DIR_ABILENE)
         # Parse the number of peering interfaces from network-cfg.json
         with open('%snetwork-cfg.json' % SDNIP_CONF_DIR) as data_file:
             data = json.load(data_file)
@@ -284,7 +431,7 @@ if __name__ == '__main__':
 
     net.stop()
 
-    if DEMO_ONOS_BUILD:
+    if AUTO_TRAFFIC_GENERATION:
         if IPERF_OUTPUT_TO_FILE:
             for dstHost in hostList:
                 for srcHost in filter(lambda host: host != dstHost, hostList):
