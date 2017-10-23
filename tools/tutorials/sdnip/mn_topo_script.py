@@ -7,6 +7,7 @@ from mininet.node import Host, RemoteController
 from mininet.topo import Topo
 import os, subprocess, distutils.spawn, socket, json, glob, urllib2, base64, time
 import create_abilene_conf as abilene
+import cPickle as pickle
 
 QUAGGA_DIR = '/usr/lib/quagga'
 # Must exist and be owned by quagga user (quagga:quagga by default on Ubuntu)
@@ -257,10 +258,7 @@ if __name__ == '__main__':
     TRAFFIC_GEN_TOOL = 'IPERF3'   
     assert TRAFFIC_GEN_TOOL in ['D-ITG', 'IPERF2', 'IPERF3']
 
-    V = 2
     AUTO_TRAFFIC_GENERATION = True
-    USE_SDNIP_TOPO = False
-    AGGREGATION_INTERVAL = 10
 
     '''
     iperf3 has TCP bandwith configurable but does not allow concurrent clients (sometimes it hangs and results busy)
@@ -303,20 +301,48 @@ if __name__ == '__main__':
         max_TM_value = 1e8
         min_TM_value = 2e6
 
-    Run ~/robust-routing/onos/TMtoIperf.py
-    and copy 'TM_per_demand' in this file
+    Run ~/robust-routing/onos/TMtoIperf.py on the Gurobi machine
     
-    In 2 terminals run:
+    In a terminal run:
     sudo ip addr add 10.10.10.1/24 dev enp0s3
+    sudo service quagga restart; sudo mn -c
     cd ~/onos
     tools/build/onos-buck build onos --show-output; tools/build/onos-buck run onos-local -- clean debug
 
+    Once ONOS is ready, in another terminal run:
     cd ~/onos/tools/tutorials/sdnip
-    sudo service quagga restart; sudo mn -c; sudo -E python mn_topo_script.py
+    sudo -E python mn_topo_script.py
     
-    Run ~/robust-routing/onos/main.py
+    Once "Ready to receive the configuration on TCP port 12346!" appears, run ~/robust-routing/onos/main.py on the Gurobi machine
+
+    Once "Ready! Send the magic UDP packet..." appears press ENTER on the Gurobi machine
     '''
 
+    if AUTO_TRAFFIC_GENERATION:
+        print 'Ready to receive the configuration on TCP port 12346!'
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(('',12346))
+        except socket.error as msg:
+            print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
+            exit()
+        s.listen(1)
+        conn, addr = s.accept()
+        rxdata = ''
+        while True:
+            data = conn.recv(1024)
+            rxdata += data
+            if not data:
+                break
+        pickled_config = pickle.loads(rxdata)
+        TM_per_demand = pickled_config['TM_per_demand']
+        USE_SDNIP_TOPO = pickled_config['USE_SDNIP_TOPO']
+        AGGREGATION_INTERVAL = pickled_config['AGGREGATION_INTERVAL']
+        V = pickled_config['V']
+        conn.close()
+        s.close()
+
+        print 'Configuration received! Starting MN network...'
     #setLogLevel('debug')
     topo = SdnIpTopo() if USE_SDNIP_TOPO else AbileneTopo()
 
@@ -358,9 +384,6 @@ if __name__ == '__main__':
                     if RUN_INTO_XTERM:
                         cmd = 'xterm %s -xrm \'XTerm.vt100.allowTitleOps: false\' -T %s -e "%s; bash"&' % (XTERM_GEOMETRY, dstHost.params['ip'], cmd.replace('&',''))
                     dstHost.cmd(cmd)
-
-        # in Mbit/s
-        TM_per_demand = {('192.168.11.1', '192.168.2.1'): [6, 21, 23, 17, 27, 14, 14, 25, 21, 14, 20, 14], ('192.168.3.1', '192.168.5.1'): [8, 9, 8, 9, 16, 10, 10, 10, 10, 10, 10, 28], ('192.168.6.1', '192.168.3.1'): [2, 3, 2, 2, 5, 4, 2, 3, 3, 2, 4, 4], ('192.168.6.1', '192.168.5.1'): [2, 2, 3, 2, 2, 3, 3, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.3.1'): [2, 3, 2, 2, 2, 3, 4, 5, 2, 2, 2, 2], ('192.168.3.1', '192.168.6.1'): [7, 9, 11, 9, 13, 9, 8, 7, 11, 10, 15, 10], ('192.168.5.1', '192.168.11.1'): [5, 7, 8, 3, 6, 8, 7, 7, 2, 2, 5, 10], ('192.168.5.1', '192.168.6.1'): [2, 2, 2, 2, 2, 2, 2, 11, 2, 2, 9, 2], ('192.168.2.1', '192.168.3.1'): [2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2], ('192.168.5.1', '192.168.2.1'): [10, 20, 20, 16, 5, 13, 13, 15, 14, 14, 10, 20], ('192.168.2.1', '192.168.6.1'): [2, 4, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2], ('192.168.11.1', '192.168.6.1'): [2, 4, 4, 2, 4, 3, 2, 5, 5, 2, 5, 6], ('192.168.11.1', '192.168.5.1'): [12, 9, 13, 18, 16, 10, 12, 17, 16, 15, 29, 10], ('192.168.6.1', '192.168.11.1'): [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], ('192.168.11.1', '192.168.3.1'): [5, 13, 13, 12, 10, 31, 27, 17, 15, 13, 11, 16], ('192.168.2.1', '192.168.5.1'): [2, 3, 4, 3, 2, 2, 2, 2, 2, 3, 2, 2], ('192.168.6.1', '192.168.2.1'): [2, 6, 4, 5, 4, 5, 5, 8, 6, 2, 4, 4], ('192.168.2.1', '192.168.11.1'): [4, 6, 2, 2, 2, 2, 4, 6, 2, 2, 2, 6], ('192.168.3.1', '192.168.2.1'): [20, 24, 23, 22, 14, 15, 16, 16, 18, 19, 14, 15], ('192.168.3.1', '192.168.11.1'): [8, 9, 14, 13, 15, 9, 9, 13, 13, 9, 15, 10]}
 
 	if V in [1,2]:
             for dem in TM_per_demand:
